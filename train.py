@@ -3,14 +3,12 @@ from datetime import datetime
 import json
 import os
 
-import gymnasium as gym
-import minigrid
-import numpy as np
 from simple_parsing import ArgumentParser
 import tensorflow as tf
 import tensorflow.keras as keras
 import tensorflow.keras.layers as layers
 
+from grid_exp_oe.env import create_vectorize_env
 from grid_exp_oe.ppo import PPOHparams, train
 
 
@@ -54,27 +52,8 @@ def build_policy(feature_extractor):
     return policy
 
 
-def process_obs(obs):
-    return obs["image"], np.array(obs["direction"])
-
-
-def create_vectorize_env(env_id: str, num_envs: int):
-    envs_fns = [lambda: gym.make(env_id) for _ in range(num_envs)]
-    oenvs = gym.vector.SyncVectorEnv(envs_fns, autoreset_mode=gym.vector.AutoresetMode.DISABLED)
-
-    envs = gym.wrappers.vector.VectorizeTransformObservation(
-        oenvs,
-        wrapper=gym.wrappers.TransformObservation,
-        func=process_obs,
-        observation_space=gym.spaces.Tuple(
-                    (oenvs.single_observation_space["image"], oenvs.single_observation_space["direction"])
-        ),
-    )
-    return envs
-
-
 @dataclass
-class Experiment:
+class ExperimentConfig:
     env_id: str
     name: str | None = None
     env_seed: int | None = None
@@ -82,7 +61,7 @@ class Experiment:
 
 if __name__ == "__main__":
     parser = ArgumentParser()
-    parser.add_arguments(Experiment, dest="experiment")
+    parser.add_arguments(ExperimentConfig, dest="experiment")
     parser.add_arguments(PPOHparams, dest="hparams")
     parser.add_argument("--logdir", type=str, default="logs", 
                         help="path to Tensorboard logs folder (a new folder for the current experiment is created within)")
@@ -90,10 +69,10 @@ if __name__ == "__main__":
                         help="path to experiments folder (a new folder for the current experiment is created within)")
     args = parser.parse_args()
     
-    args.experiment: Experiment
-    args.config: PPOHparams
+    experiment: ExperimentConfig = args.experiment
+    hparams: PPOHparams = args.hparams
 
-    exp_name = args.experiment.name
+    exp_name = experiment.name
     exp_time_str = datetime.now().strftime("%Y%m%d-%H%M%S")
 
     logdir = os.path.join(
@@ -112,8 +91,8 @@ if __name__ == "__main__":
     os.makedirs(expdir)
 
     all_configs = {
-        "experiment": asdict(args.experiment),
-        "hparams": asdict(args.hparams),
+        "experiment": asdict(experiment),
+        "hparams": asdict(hparams),
         "metadata": {
             "time": exp_time_str
         }
@@ -122,12 +101,12 @@ if __name__ == "__main__":
     with open(store_cfg, "w") as f:
         json.dump(all_configs, f, indent=4)
 
-    envs = create_vectorize_env(args.experiment.env_id, args.hparams.num_envs)
+    envs = create_vectorize_env(experiment.env_id, hparams.num_envs)
 
     get_policy_fn = lambda: build_policy(get_features_extractor())
 
     policy, stats = train(
-        get_policy_fn, args.hparams, envs,
+        get_policy_fn, hparams, envs,
         logdir=logdir,
-        env_seed=args.experiment.env_seed
+        env_seed=experiment.env_seed
     )

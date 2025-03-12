@@ -394,7 +394,7 @@ def train(
         grad_norms = []
 
         advantages = []
-        
+
         if ann_scheduler is not None:
             optimizer.learning_rate.assign(ann_scheduler(total_steps))
         for _ in range(config.epochs):
@@ -416,18 +416,18 @@ def train(
                     if tf.math.reduce_any(tf.math.is_nan(loss)):
                         raise RuntimeError("NANs found in loss!")
                 grads = tape.gradient(loss, policy.trainable_variables)
-    
+
                 if config.clip_by_norm is not None:
                     grads, grads_global_norm = tf.clip_by_global_norm(grads, config.clip_by_norm)
                     # grads_global_norm does not consider potential clipping
                     grads_global_norm = tf.clip_by_value(grads_global_norm, 0, config.clip_by_norm)
                 else:
                     grads_global_norm = tf.norm(tf.concat([tf.reshape(g, -1) for g in grads], 0))
-                
+
                 if tf.math.reduce_any(tf.math.is_nan(grads_global_norm)):
                     raise RuntimeError("NANs found in gradients!")
                 optimizer.apply(grads, policy.trainable_variables)
-                
+
                 losses.append(loss.numpy())
                 clip_losses.append(loss_clip.numpy())
                 critic_losses.append(loss_critic.numpy())
@@ -440,8 +440,7 @@ def train(
                     advs=advantages)
         if logdir is not None:
             feed_summary_writer(stats, start_time)
-            
+
         buffer.reset()
         update_old_policy()
     return policy, stats
-
