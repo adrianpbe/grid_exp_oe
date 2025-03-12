@@ -25,6 +25,35 @@ TF_TO_NP_DTYPE = {
 }
 
 
+@dataclass
+class PPOHparams:
+    total_steps: int
+    horizon: int
+    num_envs: int
+    epochs: int = 5
+    learning_rate: float = 5e-4
+    batch_size: int | None = None
+    clip_value: float = 0.1
+    gamma: float = 0.99
+    gae_lambda:  float = 0.95
+    critic_coef: float = 1
+    entropy_coef: float = 0.01
+    annealing_steps: int | None = None
+    final_learning_rate: float | None = None
+    clip_by_norm: float | None = None
+
+    normalize_value: bool = False
+    normalize_batch_advantage: bool = True
+
+    def __post_init__(self):
+        if self.batch_size is None:
+            self.batch_size = self.horizon * self.num_envs
+        if (self.annealing_steps is not None) ^ (self.final_learning_rate is not None):
+            raise ValueError("both annealing_steps and final_learning_rate must be provided")
+        elif self.batch_size > (self.horizon * self.num_envs):
+            raise ValueError("batch size cannot be bigger than the num_envs times the horizon")
+
+
 def get_gae_estimator(gamma: float, gae_lambda: float):
     def estimate_gae(estimated_value, next_estimated_value, reward, terminal):
         delta = reward + (1 - terminal) * gamma * next_estimated_value - estimated_value
@@ -52,35 +81,6 @@ def vectorize_gae_estimator(gae_estimator):
             axis=1
         )
     return estimate
-
-
-@dataclass
-class PPOHparams:
-    total_steps: int
-    horizon: int
-    num_envs: int
-    epochs: int = 5
-    learning_rate: float = 5e-4
-    batch_size: int | None = None
-    clip_value: float = 0.1
-    gamma: float = 0.99
-    gae_lambda:  float = 0.95
-    critic_coef: float = 1
-    entropy_coef: float = 0.1
-    annealing_steps: int | None = None
-    final_learning_rate: float | None = None
-    clip_by_norm: float | None = None
-
-    normalize_value: bool = False
-    normalize_batch_advantage: bool = True
-
-    def __post_init__(self):
-        if self.batch_size is None:
-            self.batch_size = self.horizon * self.num_envs
-        if (self.annealing_steps is not None) ^ (self.final_learning_rate is not None):
-            raise ValueError("both annealing_steps and final_learning_rate must be provided")
-        elif self.batch_size > (self.horizon * self.num_envs):
-            raise ValueError("batch size cannot be bigger than the num_envs times the horizon")
 
 
 def build_loss(policy: keras.Model, old_policy: keras.Model, config: PPOHparams, return_all: bool):
