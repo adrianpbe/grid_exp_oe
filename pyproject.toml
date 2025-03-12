@@ -10,6 +10,7 @@ dependencies = [
     "minigrid>=3.0.0",
     "numpy>=2.0.2",
     "pufferlib>=0.1.2",
+    "simple-parsing>=0.1.7",
     "tensorflow[and-cuda]>=2.18.0",
     "tqdm>=4.67.1",
 ]
