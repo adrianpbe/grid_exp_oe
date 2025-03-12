@@ -124,7 +124,7 @@ if __name__ == "__main__":
 
     envs = create_vectorize_env(args.experiment.env_id, args.hparams.num_envs)
 
-    get_policy_fn = build_policy(get_features_extractor())
+    get_policy_fn = lambda: build_policy(get_features_extractor())
 
     policy, stats = train(
         get_policy_fn, args.hparams, envs,

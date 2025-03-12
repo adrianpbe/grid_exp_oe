@@ -330,8 +330,8 @@ def train(
         writer = tf.summary.create_file_writer(logdir )
         writer.set_as_default()
 
-    policy = policy_fn
-    old_policy = policy_fn
+    policy = policy_fn()
+    old_policy = policy_fn()
     
     gae_estimator = vectorize_gae_estimator(get_gae_estimator(config.gamma, config.gae_lambda))
     
