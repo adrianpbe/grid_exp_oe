@@ -8,7 +8,7 @@ import tensorflow as tf
 import tensorflow.keras as keras
 import tensorflow.keras.layers as layers
 
-from grid_exp_oe.env import create_vectorize_env
+from grid_exp_oe.env import create_vectorized_env
 from grid_exp_oe.ppo import PPOHparams, train
 
 
@@ -101,7 +101,7 @@ if __name__ == "__main__":
     with open(store_cfg, "w") as f:
         json.dump(all_configs, f, indent=4)
 
-    envs = create_vectorize_env(experiment.env_id, hparams.num_envs)
+    envs = create_vectorized_env(experiment.env_id, hparams.num_envs)
 
     get_policy_fn = lambda: build_policy(get_features_extractor())
 
