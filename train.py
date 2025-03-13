@@ -84,11 +84,14 @@ if __name__ == "__main__":
         args.expdir,
         exp_name + "_" + exp_time_str if exp_name is not None else exp_time_str 
     )
+    ckptdir = os.path.join(expdir, "checkpoints")
+
     os.makedirs(args.logdir, exist_ok=True)
     os.makedirs(args.expdir, exist_ok=True)
 
     os.makedirs(logdir)
     os.makedirs(expdir)
+    os.makedirs(ckptdir)
 
     all_configs = {
         "experiment": asdict(experiment),
@@ -107,6 +110,7 @@ if __name__ == "__main__":
 
     policy, stats = train(
         get_policy_fn, hparams, envs,
+        ckptdir=ckptdir,
         logdir=logdir,
         env_seed=experiment.env_seed
     )

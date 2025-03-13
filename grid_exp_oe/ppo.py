@@ -321,9 +321,54 @@ def feed_summary_writer(stats: PPOStats, start_time: int):
     tf.summary.scalar('env/num_of_episodes', data=stats.num_of_episodes[-1], step=total_steps)
 
 
+CheckpointManagers = tuple[tf.train.Checkpoint, tf.train.CheckpointManager, tf.train.CheckpointManager, int]
+
+
+def create_checkpoints(ckptdir: str, policy: keras.Model, optimizer: keras.Optimizer, save_freq: int) -> CheckpointManagers:
+    checkpoint = tf.train.Checkpoint(
+    optimizer=optimizer,
+    model=policy,
+    step=tf.Variable(0, trainable=False),
+    best_reward=tf.Variable(float('-inf'), trainable=False)  # Track best reward
+    )
+
+    # Create a checkpoint manager that keeps the best checkpoints
+    checkpoint_manager = tf.train.CheckpointManager(
+    checkpoint,
+    directory=ckptdir,
+    max_to_keep=5,
+    checkpoint_name="ppo_policy"
+    )
+
+    # Create a separate manager for the best model
+    best_checkpoint_manager = tf.train.CheckpointManager(
+    checkpoint,
+    directory=ckptdir,
+    max_to_keep=3,
+    checkpoint_name="best_ppo_policy"
+    )
+    return checkpoint, checkpoint_manager, best_checkpoint_manager, save_freq
+
+
+def update_checkpoint(checkpoint_managers: CheckpointManagers, reward: float):
+    checkpoint, checkpoint_manager, best_checkpoint_manager, save_freq = checkpoint_managers
+    checkpoint.step.assign_add(1)
+    
+    # Save regular checkpoint periodically
+    if int(checkpoint.step) % save_freq == 0:
+        checkpoint_manager.save()
+
+    # Save best checkpoint if performance improved
+    if reward > checkpoint.best_reward:
+        checkpoint.best_reward.assign(reward)
+        best_path = best_checkpoint_manager.save()
+
+
 def train(
-        policy_fn: Callable[[], keras.Model], config: PPOHparams, envs: gym.vector.VectorEnv, logdir=None, env_seed=None
-        ) -> tuple[keras.Model, PPOStats]: 
+        policy_fn: Callable[[], keras.Model], config: PPOHparams, envs: gym.vector.VectorEnv,
+        save_freq=1,
+        ckptdir=None, logdir=None, env_seed=None
+        ) -> tuple[keras.Model, PPOStats]:
     start_time = time.time()
 
     if logdir is not None:
@@ -333,6 +378,12 @@ def train(
     policy = policy_fn()
     old_policy = policy_fn()
     
+    optimizer = keras.optimizers.Adam(learning_rate=config.learning_rate)
+
+    if ckptdir is not None:
+        checkpoint_managers = create_checkpoints(ckptdir, policy, optimizer, save_freq)
+    else:
+        checkpoint_managers = None
     gae_estimator = vectorize_gae_estimator(get_gae_estimator(config.gamma, config.gae_lambda))
     
     loss_fn = build_loss(policy, old_policy, config, True)
@@ -348,8 +399,6 @@ def train(
         ann_scheduler = AnnealingScheduler(config.learning_rate, config.final_learning_rate, config.annealing_steps)
     else:
         ann_scheduler = None
-    
-    optimizer = keras.optimizers.Adam(learning_rate=config.learning_rate)
     
     stats = PPOStats()
     total_steps = 0
@@ -440,7 +489,8 @@ def train(
                     advs=advantages)
         if logdir is not None:
             feed_summary_writer(stats, start_time)
-
+        if ckptdir is not None:
+            update_checkpoint(checkpoint_managers, buffer.reward.mean())
         buffer.reset()
         update_old_policy()
     return policy, stats
