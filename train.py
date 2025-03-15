@@ -1,76 +1,80 @@
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass
 from datetime import datetime
 import json
 import os
+import subprocess
 
-from simple_parsing import ArgumentParser
-import tensorflow as tf
-import tensorflow.keras as keras
-import tensorflow.keras.layers as layers
+from simple_parsing import ArgumentParser, subgroups
 
+from grid_exp_oe.base import AlgorithmHParams
 from grid_exp_oe.env import create_vectorized_env
+from grid_exp_oe.models import ModelHparams, get_model_builder
 from grid_exp_oe.ppo import PPOHparams, train
 
 
-IM_OBS_SHAPE = (7, 7, 3)
-NUM_ACTIONS = 7
+def _get_commit() -> str:
+    """Get the commit hash of the repository, requires having git"""
+    repo_path = os.path.dirname(os.path.realpath(__file__))
+    process = subprocess.run(["git", "-C", repo_path, "rev-parse", "HEAD"], capture_output=True)
+    commit_hash = process.stdout.decode("utf-8").strip()
+    return commit_hash
 
 
-def get_features_extractor():
-    return keras.models.Sequential(
-        [
-            layers.Input(shape=IM_OBS_SHAPE, dtype=tf.float32),
-            layers.Conv2D(8, 3, activation="relu", padding="same"),
-            layers.Conv2D(16, 3, activation="relu", padding="same", strides=2),
-            layers.Conv2D(16, 3, activation="relu", padding="same"),
-            layers.Reshape((16, 16)),
-        ]
-    )
+AVAILABLE_ALGORITHMS_HPARAMS = {
+    "ppo": PPOHparams,
+}
 
 
-def build_policy(feature_extractor):
-    in_img_obs = layers.Input(shape=(7,7,3), dtype=tf.float32)
-    dir_input = layers.Input(shape=(), dtype=tf.int32)
-    dir_encoder = layers.Embedding(4, 32)
-    dir_z = dir_encoder(dir_input)
-    
-    x = feature_extractor(in_img_obs)
-    
-    x = layers.MultiHeadAttention(4, 16)(x, x)
-    x = layers.Dense(32, activation="relu")(x)
-    x = layers.GlobalAveragePooling1D()(x)
-    
-    x = x + dir_z
-    
-    z_policy = layers.Dense(32, activation="relu")(x)
-    logits = layers.Dense(NUM_ACTIONS, activation=None)(z_policy)
-    
-    z_critic = layers.Dense(32, activation="relu")(x)
-    value = layers.Dense(1, activation=None)(z_critic)
-    
-    policy = keras.Model(inputs=(in_img_obs, dir_input), outputs=(logits, value))
-    return policy
+DEFAULT_MODEL_BUILDER = {
+    "ppo": "conv_actor_critic"
+}
+
+
+@dataclass
+class ModelFileConfig:
+    type: str
+    hparams: ModelHparams
 
 
 @dataclass
 class ExperimentConfig:
     env_id: str
+    algo: AlgorithmHParams = subgroups(AVAILABLE_ALGORITHMS_HPARAMS, default="ppo")
     name: str | None = None
     env_seed: int | None = None
+    model_config: str | None = None
 
 
 if __name__ == "__main__":
     parser = ArgumentParser()
     parser.add_arguments(ExperimentConfig, dest="experiment")
-    parser.add_arguments(PPOHparams, dest="hparams")
     parser.add_argument("--logdir", type=str, default="logs", 
                         help="path to Tensorboard logs folder (a new folder for the current experiment is created within)")
     parser.add_argument("--expdir", type=str, default="experiments", 
                         help="path to experiments folder (a new folder for the current experiment is created within)")
     args = parser.parse_args()
-    
+
+
     experiment: ExperimentConfig = args.experiment
-    hparams: PPOHparams = args.hparams
+
+    algo_hparams = experiment.algo
+    algo_id = algo_hparams.algo_id()
+
+    envs = create_vectorized_env(experiment.env_id, algo_hparams.num_envs)
+
+    config_file = experiment.model_config
+
+    if config_file is None:
+        model_id = DEFAULT_MODEL_BUILDER[algo_id]
+        model_config_data = None
+        print(f"Using default model {model_id} for {algo_id}")
+    else:
+        with open(config_file, "r") as f:
+            model_config_data = json.load(f)
+        model_id = model_config_data["type"]
+        model_config_data = model_config_data["hparams"]
+
+    model_builder = get_model_builder(model_id, model_config_data)
 
     exp_name = experiment.name
     exp_time_str = datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -94,22 +98,40 @@ if __name__ == "__main__":
     os.makedirs(ckptdir)
 
     all_configs = {
-        "experiment": asdict(experiment),
-        "hparams": asdict(hparams),
+        "experiment": {
+            "name": experiment.name,
+            "env_id": experiment.env_id,
+            "env_seed": experiment.env_seed,
+        },
+        "algorithm": {
+            "algorithm_id": algo_id,
+            "hparams": asdict(algo_hparams),
+        },
+        "model": {
+            "model_id": model_id,
+            "hparams": asdict(model_builder.hparams)
+        },
         "metadata": {
             "time": exp_time_str
         }
     }
+    try:
+        commit_hash = _get_commit()
+    except FileExistsError as e:
+        print("Commit hash could not be found, git is required")
+        pass
+    else:
+        all_configs["metadata"]["commit"] = commit_hash
+
     store_cfg = os.path.join(expdir, "config.json")
     with open(store_cfg, "w") as f:
         json.dump(all_configs, f, indent=4)
 
-    envs = create_vectorized_env(experiment.env_id, hparams.num_envs)
 
-    get_policy_fn = lambda: build_policy(get_features_extractor())
+    get_policy_fn = lambda: model_builder.build(envs)
 
     policy, stats = train(
-        get_policy_fn, hparams, envs,
+        get_policy_fn, algo_hparams, envs,
         ckptdir=ckptdir,
         logdir=logdir,
         env_seed=experiment.env_seed

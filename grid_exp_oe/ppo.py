@@ -11,6 +11,10 @@ import tensorflow as tf
 import tensorflow.keras as keras
 from tqdm import tqdm
 
+from grid_exp_oe.base import AlgorithmHParams, AlgorithmRequirements
+from grid_exp_oe.models.base import PolicyType
+from grid_exp_oe.models.common import sample_logits
+
 
 TF_TO_NP_DTYPE = {
     tf.float16: np.float16,
@@ -25,8 +29,13 @@ TF_TO_NP_DTYPE = {
 }
 
 
+PPORequirements = AlgorithmRequirements(
+    policy_type=PolicyType.ACTOR_CRITIC
+)
+
+
 @dataclass
-class PPOHparams:
+class PPOHparams(AlgorithmHParams):
     total_steps: int
     horizon: int
     num_envs: int
@@ -52,7 +61,12 @@ class PPOHparams:
             raise ValueError("both annealing_steps and final_learning_rate must be provided")
         elif self.batch_size > (self.horizon * self.num_envs):
             raise ValueError("batch size cannot be bigger than the num_envs times the horizon")
+    
+    def requirements(self) -> AlgorithmRequirements:
+        return PPORequirements
 
+    def algo_id(self) -> str:
+        return "ppo"
 
 def get_gae_estimator(gamma: float, gae_lambda: float):
     def estimate_gae(estimated_value, next_estimated_value, reward, terminal):
@@ -88,7 +102,7 @@ def build_loss(policy: keras.Model, old_policy: keras.Model, config: PPOHparams,
     def ppo_loss(obs, actions, advantage, vtarget):
         """Expected shapes:
           * obs: (B, ...)
-          * actions: (B, 1)
+          * actions: (B)
           * advantage: (B, 1)
           * vtarget: (B, 1)
           """
@@ -96,7 +110,7 @@ def build_loss(policy: keras.Model, old_policy: keras.Model, config: PPOHparams,
         log_probs = logits - tf.math.reduce_logsumexp(logits, axis=-1, keepdims=True)
         ac_logprob = tf.gather_nd(
             log_probs,
-            tf.stack([tf.range(len(log_probs)), tf.squeeze(actions)], axis=1)
+            tf.stack([tf.range(len(log_probs)), actions], axis=1)
         )  # shape [b]
 
         old_logits, _ = old_policy(obs)
@@ -104,7 +118,7 @@ def build_loss(policy: keras.Model, old_policy: keras.Model, config: PPOHparams,
         old_logprobs = old_logits - tf.math.reduce_logsumexp(old_logits, axis=-1, keepdims=True)
         old_ac_logprob = tf.gather_nd(
             old_logprobs,
-            tf.stack([tf.range(len(old_logprobs)), tf.squeeze(actions)], axis=1)
+            tf.stack([tf.range(len(old_logprobs)), actions], axis=1)
         )  # shape [b]
 
         log_ratio = ac_logprob - old_ac_logprob
@@ -152,25 +166,13 @@ def build_loss(policy: keras.Model, old_policy: keras.Model, config: PPOHparams,
     return tf.function(ppo_loss)
 
 
-def sample_logits(logits):
-    # https://stats.stackexchange.com/questions/359442/sampling-from-a-categorical-distribution
-    u = tf.random.uniform(tf.shape(logits))
-    return tf.expand_dims(
-        tf.argmax(
-            logits - tf.math.log(-tf.math.log(u)),
-            axis=-1,
-            output_type=tf.int32),
-        axis=-1,
-    )
-
-
-def extract_obs_batch(batch_idx, obs):
+def extract_obs_batch(batch_idx: np.ndarray, obs: np.ndarray) -> np.ndarray:
     if isinstance(obs, tuple):
         return tuple([extract_obs_batch(batch_idx, ob) for ob in obs])
     return obs[batch_idx]
 
 
-def old_policy_updater(policy, old_policy):
+def old_policy_updater(policy: keras.Model, old_policy: keras.Model):
     def update_old_policy():
         for w_old, w in zip(old_policy.trainable_variables, policy.trainable_variables):
             w_old.assign(w)
@@ -227,7 +229,7 @@ class Buffer:
             )
         else:
             obs = obs_from_shape(size, num_envs,  policy.inputs[0])
-        action = np.zeros((size, num_envs, 1), dtype=np.int32)
+        action = np.zeros((size, num_envs), dtype=np.int32)
         reward = np.zeros((size, num_envs, 1), dtype=np.float32)
         estimated_value = np.zeros((size, num_envs, 1), dtype=np.float32)
         next_estimated_value = np.zeros((size, num_envs, 1), dtype=np.float32)
