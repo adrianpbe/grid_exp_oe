@@ -34,14 +34,19 @@ def get_policy(config: EvaluationConfig, env: gym.Env, expand_batch: bool, exp_d
         if config.random:
             print("random flag is activated but will be ignored as experiment is provided")
         if config.ckpt is None:
-            raise ValueError("ckpt must be provided")
+            print("no ckpt is provided, the best policy ckpt found will be used")
+            ckpt_path = tf.train.latest_checkpoint(os.path.join(config.experiment, "best_checkpoints"))
+            if ckpt_path is None:
+                raise ValueError("not ckpt found")
+        else:
+            ckpt_path = config.ckpt
         model_id = exp_data["model"]["model_id"]
         model_hparams_dict = exp_data["model"]["hparams"]
         model_builder = get_model_builder(model_id, model_hparams_dict)
         model = model_builder.build(env)
         checkpoint = tf.train.Checkpoint(model=model)
-        checkpoint.restore(config.ckpt).expect_partial()  # expect_partial() suppresses warnings about not restoring all variables
-        print(f"restored ckpts: {config.ckpt}")
+        checkpoint.restore(ckpt_path).expect_partial()  # expect_partial() suppresses warnings about not restoring all variables
+        print(f"restored ckpts: {ckpt_path}")
         policy = model_builder.adapt_eval(model, expand_batch, return_numpy=True)
     else:
         policy = lambda _obs: env.action_space.sample()

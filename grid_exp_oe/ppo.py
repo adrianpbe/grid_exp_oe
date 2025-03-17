@@ -364,15 +364,30 @@ def get_feed_stats_csv(statsdir: str) -> Callable[[dict[str, float]], None]:
     return feed_stats_csv_fn
 
 
-CheckpointManagers = tuple[tf.train.Checkpoint, tf.train.CheckpointManager, tf.train.CheckpointManager, int]
+CheckpointManagers = tuple[
+    tf.train.Checkpoint,
+    tf.train.Checkpoint,
+    tf.train.CheckpointManager,
+    tf.train.CheckpointManager,
+    int
+]
 
 
 def create_checkpoints(ckptdir: str, policy: keras.Model, optimizer: keras.Optimizer, save_freq: int) -> CheckpointManagers:
+    parent, ckpt_path = os.path.split(ckptdir)
+    best_ckptdir = os.path.join(parent, "best_" + ckpt_path)
+    os.mkdir(best_ckptdir)
+
     checkpoint = tf.train.Checkpoint(
     optimizer=optimizer,
     model=policy,
     step=tf.Variable(0, trainable=False),
-    best_reward=tf.Variable(float('-inf'), trainable=False)  # Track best reward
+    )
+        
+    checkpoint_best = tf.train.Checkpoint(
+        optimizer=optimizer,
+        model=policy,
+        best_reward=tf.Variable(float('-inf'), trainable=False)  # Track best reward
     )
 
     # Create a checkpoint manager that keeps the best checkpoints
@@ -385,16 +400,16 @@ def create_checkpoints(ckptdir: str, policy: keras.Model, optimizer: keras.Optim
 
     # Create a separate manager for the best model
     best_checkpoint_manager = tf.train.CheckpointManager(
-    checkpoint,
-    directory=ckptdir,
+    checkpoint_best,
+    directory=best_ckptdir,
     max_to_keep=3,
     checkpoint_name="best_ppo_policy"
     )
-    return checkpoint, checkpoint_manager, best_checkpoint_manager, save_freq
+    return checkpoint, checkpoint_best, checkpoint_manager, best_checkpoint_manager, save_freq
 
 
 def update_checkpoint(checkpoint_managers: CheckpointManagers, iteration: int, reward: float):
-    checkpoint, checkpoint_manager, best_checkpoint_manager, save_freq = checkpoint_managers
+    checkpoint, checkpoint_best, checkpoint_manager, best_checkpoint_manager, save_freq = checkpoint_managers
     checkpoint.step.assign(iteration)
     
     # Save regular checkpoint periodically
@@ -402,8 +417,8 @@ def update_checkpoint(checkpoint_managers: CheckpointManagers, iteration: int, r
         checkpoint_manager.save(checkpoint_number=checkpoint.step)
 
     # Save best checkpoint if performance improved
-    if reward > checkpoint.best_reward:
-        checkpoint.best_reward.assign(reward)
+    if reward > checkpoint_best.best_reward:
+        checkpoint_best.best_reward.assign(reward)
         best_checkpoint_manager.save(checkpoint_number=checkpoint.step)
 
 
