@@ -132,6 +132,7 @@ if __name__ == "__main__":
 
     policy, stats = train(
         get_policy_fn, algo_hparams, envs,
+        experimentdir=expdir,
         ckptdir=ckptdir,
         logdir=logdir,
         env_seed=experiment.env_seed

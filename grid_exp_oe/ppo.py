@@ -1,11 +1,10 @@
+import csv
 from dataclasses import dataclass, field
-from datetime import datetime
 import os
 import time
-from typing import Callable
+from collections.abc import Callable
 
 import gymnasium as gym
-import minigrid
 import numpy as np
 import tensorflow as tf
 import tensorflow.keras as keras
@@ -239,7 +238,9 @@ class Buffer:
 
 @dataclass
 class PPOStats:
+    iteration: list[int] = field(default_factory=list)
     total_steps: list[int] = field(default_factory=list)
+    steps_per_second: list[float] = field(default_factory=list)
     reward: list[float] = field(default_factory=list)
     final_reward: list[float] = field(default_factory=list)
     num_of_episodes: list[int] = field(default_factory=list)
@@ -253,13 +254,17 @@ class PPOStats:
     approx_kls: list[float] = field(default_factory=list)
     clip_fractions: list[float] = field(default_factory=list)
 
-    
     grad_norm: list[float] = field(default_factory=list)
 
     advs: list[float] = field(default_factory=list)
 
-    def update(self, total_steps: int, buffer: Buffer, losses, loss_clip, loss_critic, loss_entropy, aprox_kl, clip_fraction, grad_norm, **kwargs):
+    def __post_init__(self):
+        self.start_time: float =  time.time()
+
+    def update(self, n_iteration: int, total_steps: int, buffer: Buffer, losses, loss_clip, loss_critic, loss_entropy, aprox_kl, clip_fraction, grad_norm, **kwargs):
+        self.iteration.append(n_iteration)
         self.total_steps.append(total_steps)
+        self.steps_per_second.append(total_steps / (time.time() - self.start_time))
         self.reward.append(np.mean(buffer.reward))
         self.final_reward.append(np.mean(buffer.reward[buffer.terminal]) if np.any(buffer.terminal) else 0)
         self.num_of_episodes.append(np.sum(buffer.terminal))
@@ -276,6 +281,48 @@ class PPOStats:
 
         for field_name, values in kwargs.items():
             getattr(self, field_name).append(np.mean(values))
+
+    def last_iteration_stats(self) -> dict[str, float]:
+        return {
+            "iteration": self.iteration[-1],
+            "env/total_steps": self.total_steps[-1],
+            "env/steps_per_second": self.steps_per_second[-1],
+            "env/reward": self.reward[-1],
+            "env/final_reward": self.final_reward[-1],
+            "env/num_of_episodes": self.num_of_episodes[-1],
+            "losses/loss": self.loss[-1],
+            "losses/loss_clip": self.loss_clip[-1],
+            "losses/loss_critic": self.loss_critic[-1],
+            "losses/loss_entropy": self.loss_entropy[-1],
+            "losses/value": self.value[-1],
+            "losses/advs": self.advs[-1],
+            "losses/approx_kls": self.approx_kls[-1],
+            "losses/clip_fractions": self.clip_fractions[-1],
+            "losses/grad_norm": self.grad_norm[-1],
+        }
+
+    @staticmethod
+    def fieldnames() -> list[str]:
+        return [
+            "iteration",
+            "env/total_steps",
+            "env/steps_per_second",
+            "env/reward",
+            "env/final_reward",
+            "env/num_of_episodes",
+            "losses/loss",
+            "losses/loss_clip",
+            "losses/loss_critic",
+            "losses/loss_entropy",
+            "losses/value",
+            "losses/advs",
+            "losses/approx_kls",
+            "losses/clip_fractions",
+            "losses/grad_norm",
+        ]
+
+
+FIELDNAMES = PPOStats.fieldnames()
 
 
 class AnnealingScheduler(keras.optimizers.schedules.LearningRateSchedule):
@@ -303,24 +350,18 @@ def flat_envs_array(x: tuple | np.ndarray):
     return x.reshape((-1, *x.shape[2:]))
 
 
-def feed_summary_writer(stats: PPOStats, start_time: int):
-    total_steps = stats.total_steps[-1]
-    tf.summary.scalar('charts/SPS', data=int(total_steps / (time.time() - start_time)), step=total_steps)
+def feed_summary_writer(iteration_stats: dict[str, float]):
+    total_steps = iteration_stats["env/total_steps"]
+    for scalar_id, value in iteration_stats.items():
+        tf.summary.scalar(scalar_id, data=value, step=total_steps)
 
-    tf.summary.scalar('losses/loss', data=stats.loss[-1], step=total_steps)
-    tf.summary.scalar('losses/loss_clip', data=stats.loss_clip[-1], step=total_steps)
-    tf.summary.scalar('losses/loss_critic', data=stats.loss_critic[-1], step=total_steps)
-    tf.summary.scalar('losses/loss_entropy', data=stats.loss_entropy[-1], step=total_steps)
 
-    tf.summary.scalar('losses/value', data=stats.value[-1], step=total_steps)
-    tf.summary.scalar('losses/advs', data=stats.advs[-1], step=total_steps)
-
-    tf.summary.scalar('losses/approx_kls', data=stats.approx_kls[-1], step=total_steps)
-    tf.summary.scalar('losses/clip_fractions', data=stats.clip_fractions[-1], step=total_steps)
-
-    tf.summary.scalar('env/reward', data=stats.reward[-1], step=total_steps)
-    tf.summary.scalar('env/final_reward', data=stats.final_reward[-1], step=total_steps)
-    tf.summary.scalar('env/num_of_episodes', data=stats.num_of_episodes[-1], step=total_steps)
+def get_feed_stats_csv(statsdir: str) -> Callable[[dict[str, float]], None]:
+    def feed_stats_csv_fn(iteration_stats: dict[str, float]):
+        with open(statsdir, "a", newline='') as f:
+            csv_writer = csv.DictWriter(f, fieldnames=FIELDNAMES)
+            csv_writer.writerow(iteration_stats)
+    return feed_stats_csv_fn
 
 
 CheckpointManagers = tuple[tf.train.Checkpoint, tf.train.CheckpointManager, tf.train.CheckpointManager, int]
@@ -352,30 +393,36 @@ def create_checkpoints(ckptdir: str, policy: keras.Model, optimizer: keras.Optim
     return checkpoint, checkpoint_manager, best_checkpoint_manager, save_freq
 
 
-def update_checkpoint(checkpoint_managers: CheckpointManagers, reward: float):
+def update_checkpoint(checkpoint_managers: CheckpointManagers, iteration: int, reward: float):
     checkpoint, checkpoint_manager, best_checkpoint_manager, save_freq = checkpoint_managers
-    checkpoint.step.assign_add(1)
+    checkpoint.step.assign(iteration)
     
     # Save regular checkpoint periodically
     if int(checkpoint.step) % save_freq == 0:
-        checkpoint_manager.save()
+        checkpoint_manager.save(checkpoint_number=checkpoint.step)
 
     # Save best checkpoint if performance improved
     if reward > checkpoint.best_reward:
         checkpoint.best_reward.assign(reward)
-        best_path = best_checkpoint_manager.save()
+        best_checkpoint_manager.save(checkpoint_number=checkpoint.step)
 
 
 def train(
         policy_fn: Callable[[], keras.Model], config: PPOHparams, envs: gym.vector.VectorEnv,
-        save_freq=1,
+        save_freq=1, *, experimentdir=None,
         ckptdir=None, logdir=None, env_seed=None
         ) -> tuple[keras.Model, PPOStats]:
-    start_time = time.time()
+
+    if experimentdir is not None:
+        statsdir = os.path.join(experimentdir, "stats.csv")
+        feed_stats_csv = get_feed_stats_csv(statsdir)
+        with open(statsdir, "w", newline='') as f:
+            csv_writer = csv.DictWriter(f, fieldnames=FIELDNAMES)
+            csv_writer.writeheader()
 
     if logdir is not None:
-        writer = tf.summary.create_file_writer(logdir )
-        writer.set_as_default()
+        tensor_writer = tf.summary.create_file_writer(logdir)
+        tensor_writer.set_as_default()
 
     policy = policy_fn()
     old_policy = policy_fn()
@@ -407,7 +454,7 @@ def train(
     
     old_obs = None
 
-    for _ in tqdm(range(num_iterations)):
+    for n_iteration in tqdm(range(num_iterations)):
         while len(buffer) < config.horizon:
             # Would be nicer a for loop, but in the first iteration old_obs is None so the 
             ac_logits, next_value = policy(obs)
@@ -487,12 +534,16 @@ def train(
                 clip_fractions.append(clip_fraction.numpy())
                 grad_norms.append(grads_global_norm.numpy())
                 advantages.append(np.std(advs))
-        stats.update(total_steps, buffer, losses, clip_losses, critic_losses, entropy_losses, approx_kls, clip_fractions, grad_norms,
+        stats.update(n_iteration, total_steps, buffer, losses, clip_losses, critic_losses, entropy_losses, approx_kls, clip_fractions, grad_norms,
                     advs=advantages)
+        
+        iter_stats = stats.last_iteration_stats()
+        if experimentdir is not None:
+            feed_stats_csv(iter_stats)
         if logdir is not None:
-            feed_summary_writer(stats, start_time)
+            feed_summary_writer(iter_stats)
         if ckptdir is not None:
-            update_checkpoint(checkpoint_managers, buffer.reward.mean())
+            update_checkpoint(checkpoint_managers, n_iteration, buffer.reward.mean())
         buffer.reset()
         update_old_policy()
     return policy, stats
