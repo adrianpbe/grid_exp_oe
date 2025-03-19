@@ -50,4 +50,3 @@ def nested_repeat(x, n):
     if isinstance(x, list):
         return [nested_repeat(x_, n) for x_ in x]
     return tf.repeat(tf.expand_dims(x, axis=0), n, axis=0)
-

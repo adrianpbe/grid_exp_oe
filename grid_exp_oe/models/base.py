@@ -5,6 +5,7 @@ import gymnasium as gym
 from collections.abc import Callable
 from typing import Generic, TypeVar
 
+import numpy as np
 from tensorflow import keras
 import tensorflow as tf
 
@@ -73,8 +74,8 @@ class ActorCriticBuilder(ModelBuilder[H], Generic[H]):
     def policy_type() -> PolicyType:
         return PolicyType.ACTOR_CRITIC
 
-    def adapt_eval(self, model: keras.Model, expand_batch=False, return_numpy=False) -> Callable:
-        def policy(obs, done):
+    def adapt_eval(self, model: keras.Model, num_envs: int, expand_batch: bool, return_numpy=False) -> Callable:
+        def policy(obs, start):
             if expand_batch:
                 obs = expand_batch_rec(obs)
             logits, _ = model(obs)
@@ -83,6 +84,15 @@ class ActorCriticBuilder(ModelBuilder[H], Generic[H]):
                 return action.numpy()
             return action
         return policy
+
+
+def prepare_rnn_inputs(obs: np.ndarray | tuple[np.ndarray, ...], states: tf.Tensor | list[tf.Tensor], starts: np.ndarray):
+    """Convert all rnn policy inputs to tf.Tensor and creates a proper dictionary with all them"""
+    return {
+            "observations": tuple(tf.convert_to_tensor(ob_) for ob_ in obs) if isinstance(obs, tuple) else tf.convert_to_tensor(obs),
+            "previous_states": states,
+            "starts": tf.convert_to_tensor(starts)
+    }
 
 
 class RNNActorCriticBuilder(ModelBuilder[H], Generic[H]):
@@ -111,13 +121,17 @@ class RNNActorCriticBuilder(ModelBuilder[H], Generic[H]):
     def policy_type() -> PolicyType:
         return PolicyType.RNN_ACTOR_CRITIC
 
-    def adapt_eval(self, model: keras.Model, expand_batch=False, return_numpy=False) -> Callable:
-        initital_states = self.initial_states()
-        # TODO: Finish
-        def policy(obs, done):
+    def adapt_eval(self, model: keras.Model, num_envs: int, expand_batch: bool, return_numpy=False) -> Callable:
+        states = None
+        def policy(obs, start):
+            nonlocal states
+            if states is None:
+                states = self.initial_states(num_envs)
+
             if expand_batch:
                 obs = expand_batch_rec(obs)
-            logits, _ = model(obs)
+                start = np.expand_dims(start, axis=0)
+            logits, _, states = model(prepare_rnn_inputs(obs, states, start))
             action = sample_logits(logits)
             if return_numpy:
                 return action.numpy()

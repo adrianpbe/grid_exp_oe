@@ -1,6 +1,6 @@
 import gymnasium as gym
 
-from grid_exp_oe.models.base import ModelBuilder, ModelHparams, PolicyType
+from grid_exp_oe.models.base import ModelBuilder, ModelHparams, PolicyType, prepare_rnn_inputs
 from grid_exp_oe.models.conv_actor_critic import ConvActorCriticBuilder
 from grid_exp_oe.models.lstm_conv_actor_critic import LSTMConvActorCriticBuilder
 

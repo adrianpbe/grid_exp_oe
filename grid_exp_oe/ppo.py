@@ -11,7 +11,7 @@ import tensorflow.keras as keras
 from tqdm import tqdm
 
 from grid_exp_oe.base import AlgorithmHParams, AlgorithmRequirements
-from grid_exp_oe.models import ModelBuilder, PolicyType
+from grid_exp_oe.models import ModelBuilder, PolicyType, prepare_rnn_inputs
 from grid_exp_oe.common import sample_logits, get_gae_estimator, vectorize_gae_estimator
 
 
@@ -116,16 +116,7 @@ def np_collapse_shape_to_batch(x: np.ndarray) -> np.ndarray:
     return x.reshape((-1, *x.shape[2:]))
 
 
-def _prepare_rnn_inputs(obs: Obs, states: tf.Tensor | list[tf.Tensor], starts: np.ndarray):
-    """Convert all rnn policy inputs to tf.Tensor and creates a flat tuple with all them"""
-    return {
-            "observations": tuple(tf.convert_to_tensor(ob_) for ob_ in obs),
-            "previous_states": states,
-            "starts": tf.convert_to_tensor(starts)
-    }
-
-
-# @tf.function
+@tf.function
 def run_rnn_loop(policy: keras.Model, old_policy: keras.Model, obs: Obs, episode_starts: np.ndarray, states: np.ndarray):
     logits_sequence = []
     value_sequence = []
@@ -136,13 +127,11 @@ def run_rnn_loop(policy: keras.Model, old_policy: keras.Model, obs: Obs, episode
     for i in range(len(episode_starts)):
         step_obs = extract_obs_batch(i, obs)
         step_starts = episode_starts[i]
-        if len(_prepare_rnn_inputs(step_obs, states, step_starts)) > 5:
-            raise RuntimeError(f"NOOOOO {len(_prepare_rnn_inputs(step_obs, states, step_starts))}")
         logits, value, states = policy(
-            _prepare_rnn_inputs(step_obs, states, step_starts)
+            prepare_rnn_inputs(step_obs, states, step_starts)
             )
         old_policy_logits, _, old_policy_states = old_policy(
-            _prepare_rnn_inputs(step_obs, old_policy_states, step_starts)
+            prepare_rnn_inputs(step_obs, old_policy_states, step_starts)
         )
         logits_sequence.append(logits)
         value_sequence.append(value)
@@ -623,7 +612,7 @@ def train(
     else:
         loss_fn = build_rnn_ppo_loss_computation(policy, old_policy, config, True)
         get_batches = get_rnn_batches_iterator_fn
-        policy_fn = lambda obs_, states_, starts_: policy(_prepare_rnn_inputs(obs_, states_, starts_))
+        policy_fn = lambda obs_, states_, starts_: policy(prepare_rnn_inputs(obs_, states_, starts_))
 
         states = model_builder.initial_states(config.num_envs)
 

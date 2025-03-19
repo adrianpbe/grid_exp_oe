@@ -47,9 +47,9 @@ def get_policy(config: EvaluationConfig, env: gym.Env, expand_batch: bool, exp_d
         checkpoint = tf.train.Checkpoint(model=model)
         checkpoint.restore(ckpt_path).expect_partial()  # expect_partial() suppresses warnings about not restoring all variables
         print(f"restored ckpts: {ckpt_path}")
-        policy = model_builder.adapt_eval(model, expand_batch, return_numpy=True)
+        policy = model_builder.adapt_eval(model, config.num_envs, expand_batch, return_numpy=True)
     else:
-        policy = lambda _obs: env.action_space.sample()
+        policy = lambda _obs, start: env.action_space.sample()
     return policy
 
 
@@ -94,22 +94,24 @@ def vectorized_eval(config: EvaluationConfig, exp_data):
 
     num_iterations = config.total_steps //  config.num_envs
     has_started = False
-
+    # initiliazed dones because they are used in policy to indicate the beginning of
+    #  espisodes
+    done = np.ones(config.num_envs, dtype=bool)
     for iteration in tqdm(range(num_iterations)):
-        action = policy(obs)
+        action = policy(obs, done)
         obs, reward, terminated, truncated, info = envs.step(action)
+        done = np.logical_or(terminated, truncated)
         if has_started:
             d.append(
                 (
                     reward,
-                    np.logical_or(terminated, truncated)
+                    done
                 )
             )
         else:
             has_started = True
 
         # If the episode has ended then we can reset to start a new episode
-        done = np.logical_or(terminated, truncated)
         if np.any(done):
             obs, info = envs.reset(options={"reset_mask": done})
     
@@ -128,18 +130,22 @@ def single_env_eval(config: EvaluationConfig, exp_data):
 
     d = deque()
     obs, _ = env.reset()
+    # initiliazed done because it is used in policy to indicate the beginning of
+    #  espisodes
+    done = True
     for iteration in tqdm(range(total_steps)):        
-        action = policy(obs)
-
+        action = policy(obs, done)
+        print(action)
         obs, reward, terminated, truncated, info = env.step(action)
+        done = terminated or truncated
         d.append(
             (
                 reward,
-                terminated or truncated
+                done,
             )
         )
         # If the episode has ended then we can reset to start a new episode
-        if terminated or truncated:
+        if done:
             obs, info = env.reset()
 
     rewards, dones = zip(*list(d))
