@@ -1,11 +1,13 @@
 import gymnasium as gym
 
-from grid_exp_oe.models.base import ModelBuilder, ModelHparams
+from grid_exp_oe.models.base import ModelBuilder, ModelHparams, PolicyType
 from grid_exp_oe.models.conv_actor_critic import ConvActorCriticBuilder
+from grid_exp_oe.models.lstm_conv_actor_critic import LSTMConvActorCriticBuilder
 
 
 AVAILABLE_MODELS_BUILDERS: dict[str, ModelBuilder] = {
-    ConvActorCriticBuilder.model_id(): ConvActorCriticBuilder
+    ConvActorCriticBuilder.model_id(): ConvActorCriticBuilder,
+    LSTMConvActorCriticBuilder.model_id(): LSTMConvActorCriticBuilder,
 }
 
 

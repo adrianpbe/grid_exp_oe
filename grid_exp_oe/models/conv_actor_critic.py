@@ -13,7 +13,6 @@ class ConvActorCriticHParams(ModelHparams):
     policy_units: int = 32
     critic_units: int = 32
     dense_layers: list[int] = field(default_factory=lambda: [32])
-    direction_emb_size: int = 32
     attention: bool = True
     attention_units: int = 16
     activation: str = "relu"
@@ -54,29 +53,28 @@ class ConvActorCriticBuilder(ActorCriticBuilder[ConvActorCriticHParams]):
     def _build(self, env:  gym.Env | gym.vector.VectorEnv) -> keras.Model:
         self.im_obs_shape, self.num_actions = configure_in_out_shapes(env)
         hparams: ConvActorCriticHParams = self.hparams
+
         feature_extractor = get_features_extractor(self.im_obs_shape, hparams)
         in_img_obs = layers.Input(shape=self.im_obs_shape, dtype=tf.float32)
         dir_input = layers.Input(shape=(), dtype=tf.int32)
-        dir_encoder = layers.Embedding(4, hparams.direction_emb_size)
+
+        dir_encoder = layers.Embedding(4, hparams.attention_units if hparams.attention else 16)
         dir_z = dir_encoder(dir_input)
 
         x = feature_extractor(in_img_obs)
 
         if hparams.attention:
-            # features_maps_shape = tf.shape(x)
-            # features_channels = features_maps_shape[-1]
-            # num_spatial_features = tf.math.reduce_prod(features_maps_shape[-3:-1])
-            x = layers.Reshape((16, 16))(x)
+            x = layers.Reshape((-1, 16))(x)
             x = layers.MultiHeadAttention(4, hparams.attention_units)(x, x)
             x = layers.Dense(hparams.attention_units, activation=hparams.activation)(x)
             x = layers.GlobalAveragePooling1D()(x)
         else:
             x = layers.Flatten()(x)
 
+        x = x + dir_z
+
         for units in hparams.dense_layers:
             x = layers.Dense(units, activation=hparams.activation)(x)
-
-        x = x + dir_z
 
         z_policy = layers.Dense(hparams.policy_units, activation=hparams.activation)(x)
         logits = layers.Dense(self.num_actions, activation=None)(z_policy)

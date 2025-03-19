@@ -9,7 +9,7 @@ from simple_parsing import ArgumentParser, subgroups
 from grid_exp_oe.base import AlgorithmHParams
 from grid_exp_oe.env import create_vectorized_env
 from grid_exp_oe.models import ModelHparams, get_model_builder
-from grid_exp_oe.ppo import PPOHparams, train
+from grid_exp_oe.ppo import PPOHparams, RNNPPOHparams, train
 
 
 def _get_commit() -> str:
@@ -22,11 +22,14 @@ def _get_commit() -> str:
 
 AVAILABLE_ALGORITHMS_HPARAMS = {
     "ppo": PPOHparams,
+    "rnn_ppo": RNNPPOHparams,
+
 }
 
 
 DEFAULT_MODEL_BUILDER = {
-    "ppo": "conv_actor_critic"
+    "ppo": "conv_actor_critic",
+    "rnn_ppo": "lstm_conv_actor_critic",
 }
 
 
@@ -59,7 +62,7 @@ if __name__ == "__main__":
 
     algo_hparams = experiment.algo
     algo_id = algo_hparams.algo_id()
-
+    print(f"training algorithm {algo_id}")
     envs = create_vectorized_env(experiment.env_id, algo_hparams.num_envs)
 
     config_file = experiment.model_config
@@ -127,11 +130,8 @@ if __name__ == "__main__":
     with open(store_cfg, "w") as f:
         json.dump(all_configs, f, indent=4)
 
-
-    get_policy_fn = lambda: model_builder.build(envs)
-
     policy, stats = train(
-        get_policy_fn, algo_hparams, envs,
+        model_builder, algo_hparams, envs,
         experimentdir=expdir,
         ckptdir=ckptdir,
         logdir=logdir,
