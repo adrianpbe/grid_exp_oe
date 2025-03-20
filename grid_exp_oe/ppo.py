@@ -56,8 +56,6 @@ class PPOHparams(AlgorithmHParams):
     annealing_steps: int | None = None
     final_learning_rate: float | None = None
     clip_by_norm: float | None = None
-
-    normalize_value: bool = False
     normalize_batch_advantage: bool = True
 
     def __post_init__(self):
