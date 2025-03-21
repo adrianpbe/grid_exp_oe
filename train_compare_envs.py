@@ -1,17 +1,18 @@
 """Train the same PPO agent on different environments."""
 from grid_exp_oe import ExperimentConfig, PPOHparams, run_training_experiment
 
-EXPERIMENT_PATH = "experiments/simple_ppo_envs_comparison_t"
-LOGS_PATH = "logs/simple_ppo_envs_comparison_t"
+EXPERIMENT_PATH = "experiments/simple_ppo_envs_comparison"
+LOGS_PATH = "logs/simple_ppo_envs_comparison"
 
 
 def algo_hparams_fn():
     return PPOHparams(
-        total_steps=5_000,
+        total_steps=1_000_000,
         num_envs=16,
         horizon=128,
         epochs=5,
         batch_size=256,
+        learning_rate=0.001,
         annealing_steps=1_000_000,
         final_learning_rate=0.0,
     )
@@ -62,5 +63,5 @@ if __name__ == "__main__":
     num_runs = len(ENVS_IDS)
     for i, env_id in enumerate(ENVS_IDS):
         config = config_from_env_id(env_id)
-        print(f"Training env {env_id}, num {i}/{num_runs}, experiment name {config.name}")
+        print(f"Training env {env_id}, num {i + 1}/{num_runs}, experiment name {config.name}")
         run_training_experiment(config, logdir=LOGS_PATH, expdir=EXPERIMENT_PATH)

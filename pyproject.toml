@@ -6,13 +6,19 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "gymnasium>=1.1.1",
-    "matplotlib>=3.10.0",
     "minigrid>=3.0.0",
     "numpy>=2.0.2",
     "pufferlib>=0.1.2",
     "simple-parsing>=0.1.7",
     "tensorflow[and-cuda]>=2.18.0",
     "tqdm>=4.67.1",
+]
+
+[project.optional-dependencies]
+analysis = [
+    "matplotlib>=3.10.1",
+    "pandas>=2.2.3",
+    "seaborn>=0.13.2",
 ]
 
 [dependency-groups]
