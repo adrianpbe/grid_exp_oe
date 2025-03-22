@@ -1,8 +1,8 @@
 # Exploration-heavy Reinforcement Learning for Grid Environments
 
-Just implementing and playing with RL algorithms, with a focus on exploration, novelty seeking and open endedness for grid environment with sparse rewards ([Minigrid](https://github.com/Farama-Foundation/Minigrid) and potentially [Minihack](https://github.com/samvelyan/minihack) and [Crafter](https://github.com/danijar/crafter)).
+Just implementing and playing with RL algorithms, with a focus on exploration, novelty seeking and open endedness, for grid environment with sparse rewards ([Minigrid](https://github.com/Farama-Foundation/Minigrid) and potentially [Minihack](https://github.com/samvelyan/minihack) and [Crafter](https://github.com/danijar/crafter)).
 
-While the codebase is planned to be focused on exploration, reward free and novelty seeking algorithms, only a Proximal Policy Optimization (PPO) baseline implementation (a RNN version is also available).
+While the codebase is planned to be focused on exploration, reward free and novelty seeking algorithms, only a Proximal Policy Optimization (PPO) baseline is implemented at the moment (an RNN version is also available).
 
 
 ## Installation
@@ -14,7 +14,7 @@ uv pip install -r pyproject.toml
 ```
 
 
-Alternatively, a .venv can be created and all the exact dependencies versions autoamtically installed with simply:
+Alternatively, a `.venv` can be created and all exact versions of the dependencies automatically installed with simply:
 
 ```bash
 uv sync
@@ -23,11 +23,11 @@ uv sync
 
 ## Features
 
-Training in vectorized MiniGrid environments environmnets, only `image` and `direction` observations are used, `mission` string observation is currently ignored, so training of environments that require language may not be solvable.
+Training in vectorized MiniGrid environments, only `image` and `direction` observations are used, `mission` string observation is currently ignored, so environments that require language may not be solvable.
 
-A basic experiment tracking is built-in, models checkpoints are stored, training stats are logged to a csv and Tensorboard, config files with algorithms and models hyperparameters, as well metadata (time and commit hash) are stored.
+A basic experiment tracking is built-in, models checkpoints are stored, training stats are logged to a CSV file and to Tensorboard, config files with algorithms and models hyperparameters, as well metadata (time and commit hash) are stored.
 
-An evaluation tool is also included, it supports the evaluation of random policies on any environment, the evaluation of existing training experiments (with automatic loading of the best checkpoint or manual selection) and optionally rending of the environment for humans.
+An evaluation tool is also included, it supports the evaluation of random policies on any environment, the evaluation of existing training experiments (with automatic loading of the best checkpoint or manual selection) and optionally rendering of the environment for humans.
 
 
 ## Usage
@@ -57,7 +57,7 @@ python train.py --algo rnn_ppo --help
 ```
 The [simple_parsing](https://github.com/lebrice/SimpleParsing/tree/master) library is used to automatically generate an argument parser from dataclasses.
 
-If a model configuration is not provided, a default model is associated with the selected algorithm, default hyper parameters are used. To provide a custom model configuration, use the `--model_config` argument with the path to a JSON file containing the model hyperparameters. An example of configuration for a `conv_actor_critic` model based policy is:
+If a model configuration is not provided, a default model with default hyperparameters is automatically selected based on the selected algorithm. To provide a custom model configuration, use the `--model_config` argument with the path to a JSON file containing the model hyperparameters. An example of configuration for a `conv_actor_critic` model based policy is:
 
 
 ```json
@@ -70,9 +70,9 @@ If a model configuration is not provided, a default model is associated with the
 }
 ```
 
-Each available model has an associated hyperparameters dataclass, this JSON `"haparams"` fields are deserialized into the corresponding model hyperparameters dataclass, if no some field is not included the default values are taken.
+Each available model has an associated hyperparameters dataclass, this JSON `"hparams"` field is parsed into the corresponding model hyperparameters dataclass, if some field is not included it default value is set.
 
-Available models:
+**Available models:**
 
   * `conv_actor_critic`, config dataclass: `grid_exp_oe.models.conv_actor_critic.ConvActorCriticHParams`.
   * `lstm_conv_actor_critic`, config dataclass: `grid_exp_oe.models.lstm_conv_actor_critic.LSTMConvActorCriticHParams`, only compatible with `rnn_ppo`.
@@ -90,9 +90,9 @@ python evaluate.py --experiment path_to/experiment_folder --total_steps 10000 --
 
 If no `--ckpt` is passed, the best performing checkpoint is automatically loaded and if no `--env_id` is passed, the same environment used for training in the experiment is selected.
 
-The `--human_render` flag is set, then only one environment is used and the environment is rendered for humans.
+If the `--human_render` flag is set, then only one environment is used and the environment is rendered for humans.
 
-You may not pass an `--experiment` and set the `--random` flag to evaluate a random policy (an `--env_id` is required too).
+You can ignore the `--experiment` argument and set the `--random` flag to evaluate a random policy if the environment set by the `--env_id` argument.
 
 
 ## Future Work
@@ -105,11 +105,10 @@ You may not pass an `--experiment` and set the `--random` flag to evaluate a ran
    * Active Inference inspired agents
 - Add more models.
 - Add `mission` observation in MiniGrid, try other 2D grid environments.
-- Optimize the performance, by optimizing implementations, using better vectorization (e.g by using [PufferLib](https://github.com/PufferAI/PufferLib)), or GPU based environments.
+- Optimize the performance, by optimizing implementations, using better vectorization (e.g by using [PufferLib](https://github.com/PufferAI/PufferLib)) or GPU based environments.
 
 
 ## License
 
 This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
-
 
