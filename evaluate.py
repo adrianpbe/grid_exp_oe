@@ -23,6 +23,7 @@ class EvaluationConfig:
     num_envs: int = 1
     env_seed: int | None = None
     human_render: bool = False
+    verbose: bool = False
 
     def __post_init__(self):
         if self.human_render and self.num_envs > 1:
@@ -133,9 +134,9 @@ def single_env_eval(config: EvaluationConfig, exp_data):
     # initiliazed done because it is used in policy to indicate the beginning of
     #  espisodes
     done = True
-    for iteration in tqdm(range(total_steps)):        
+    range_iter = tqdm(range(total_steps)) if config.verbose else range(total_steps)
+    for iteration in range_iter:
         action = policy(obs, done)
-        print(action)
         obs, reward, terminated, truncated, info = env.step(action)
         done = terminated or truncated
         d.append(
