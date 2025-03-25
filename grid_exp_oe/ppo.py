@@ -1,8 +1,9 @@
+from collections.abc import Callable, Iterable, Sequence
 import csv
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 import os
 import time
-from collections.abc import Callable, Iterable, Sequence
+from typing import Literal, overload
 
 import gymnasium as gym
 import numpy as np
@@ -37,7 +38,7 @@ RNNPPORequirements = AlgorithmRequirements(
 )
 
 Obs = np.ndarray | tuple[np.ndarray, ...]
-
+TfObs = tf.Tensor | tuple[tf.Tensor, ...]
 
 @dataclass
 class PPOHparams(AlgorithmHParams):
@@ -101,6 +102,12 @@ def extract_obs_batch(batch_idx: np.ndarray, obs: np.ndarray) -> np.ndarray:
     if isinstance(obs, tuple):
         return tuple([extract_obs_batch(batch_idx, ob) for ob in obs])
     return obs[batch_idx]
+
+
+def tf_extract_obs_batch(batch_idx:  tf.Tensor, obs:  tf.Tensor) ->  tf.Tensor:
+    if isinstance(obs, tuple):
+        return tuple([tf_extract_obs_batch(batch_idx, ob) for ob in obs])
+    return tf.gather(obs, batch_idx)
 
 
 def tf_collapse_shape_to_batch(x: tf.Tensor) -> tf.Tensor:
@@ -437,10 +444,23 @@ def obs_from_shape(num_envs: int, size: int, input_layer: keras.KerasTensor):
     return np.zeros((size, num_envs, *input_layer.shape[1:]), dtype=dtype)
 
 
-def flat_envs_array(x: tuple | np.ndarray) -> tuple | np.ndarray:
+@overload
+def flat_envs_array(x: tuple | np.ndarray, return_tensor: Literal[True]) -> tuple | np.ndarray:
+    ...
+
+
+@overload
+def flat_envs_array(x: tuple | np.ndarray, return_tensor: Literal[False]) -> tuple | tf.Tensor:
+    ...
+
+
+def flat_envs_array(x, return_tensor=True):
     if isinstance(x, tuple):
-        return tuple([flat_envs_array(v) for v in x])
-    return x.reshape((-1, *x.shape[2:]))
+        return tuple([flat_envs_array(v, return_tensor) for v in x])
+    out =  x.reshape((-1, *x.shape[2:]))
+    if return_tensor:
+        return tf.convert_to_tensor(out)
+    return out
 
 
 def feed_summary_writer(iteration_stats: dict[str, float]):
@@ -518,27 +538,29 @@ def update_checkpoint(checkpoint_managers: CheckpointManagers, iteration: int, r
 # Batch type, it contains (obs, actions, adv, values)
 Batches = tuple[Obs, np.ndarray, np.ndarray, np.ndarray]
 
+TfBatches = tuple[TfObs, tf.Tensor, tf.Tensor, tf.Tensor]
+
 # Batch type, it contains (obs, actions, adv, values, starts, states)
 RnnBatches = tuple[Obs, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]
 
 
-def get_batches_iterator_fn(config: PPOHparams, buffer: Buffer, gae_estimator) -> Callable[[], Iterable[Batches]]:
+def get_batches_iterator_fn(config: PPOHparams, buffer: Buffer, gae_estimator) -> Callable[[], Iterable[TfBatches]]:
     advantage = gae_estimator(buffer.estimated_value, buffer.next_estimated_value, buffer.reward, buffer.terminal)
     v_target = buffer.estimated_value + advantage
     advantage = flat_envs_array(advantage)
     v_target = flat_envs_array(v_target)
     data_obs = flat_envs_array(buffer.obs)
     data_actions = flat_envs_array(buffer.action)
+    indexes = tf.range(tf.shape(advantage)[0])
 
-    def get_batches() -> Iterable[Batches]:
-        shuffle_idx = np.random.permutation(len(v_target))
-        batches_idx = np.split(shuffle_idx, config.num_batches)
+    def get_batches() -> Iterable[TfBatches]:
+        shuffle_idx = tf.random.shuffle(indexes)
+        batches_idx = tf.split(shuffle_idx, config.num_batches)
         for batch_idx in batches_idx:
+            advs = tf.gather(advantage, batch_idx)
             if config.normalize_batch_advantage:
-                advs = (advantage[batch_idx] - advantage[batch_idx].mean()) / (advantage[batch_idx].std() + 1e-8)
-            else:
-                advs = advantage[batch_idx]
-            yield extract_obs_batch(batch_idx, data_obs), data_actions[batch_idx], advs, v_target[batch_idx]
+                advs = (advs - tf.math.reduce_mean(advs)) / (tf.math.reduce_std(advs) + 1e-8)
+            yield tf_extract_obs_batch(batch_idx, data_obs), tf.gather(data_actions, batch_idx), advs, tf.gather(v_target, batch_idx)
     
     return get_batches
 
@@ -566,11 +588,45 @@ def get_rnn_batches_iterator_fn(config: PPOHparams, buffer: Buffer, gae_estimato
     return get_batches
 
 
+from contextlib import contextmanager
+
+
+@dataclass
+class PPOProfiling:
+    rollout_time: float = 0
+    training_time: float = 0
+    total_time: float = 0
+
+    def __post_init__(self):
+        self.start_time = time.time()
+
+    @contextmanager
+    def profile_rollout(self):
+        t = time.time()
+        
+        try:
+            yield self
+        finally:
+            self.rollout_time += time.time() - t
+    
+    @contextmanager
+    def profile_training(self):
+        t = time.time()
+        try:
+            yield self
+        finally:
+            self.training_time += time.time() - t
+
+    def close(self):
+        self.total_time = time.time() - self.start_time
+
+
 def train(
         model_builder: ModelBuilder, config: PPOHparams, envs: gym.vector.VectorEnv,
         save_freq=1, *, experimentdir=None,
         ckptdir=None, logdir=None, env_seed=None
-        ) -> tuple[keras.Model, PPOStats]:
+        ) -> tuple[keras.Model, PPOStats, dict]:
+    profiling = PPOProfiling()
     rnn_ppo = isinstance(config, RNNPPOHparams)
     policy_type = model_builder.policy_type()
 
@@ -636,78 +692,79 @@ def train(
     done = np.ones(config.num_envs, dtype=bool)
 
     for n_iteration in tqdm(range(num_iterations)):
-        buffer.previous_states = states
-        while len(buffer) < config.horizon:
-            # Would be nicer a for loop, but in the first iteration old_obs is None, so no
-            #  data is added to the buffer and an additional loop step is required to fill it up
-            done = tf.expand_dims(done, axis=-1)
-            ac_logits, next_value, states = policy_fn(obs, states, done)
-            if old_obs is not None:
-                buffer.add(old_obs, action, tf.expand_dims(reward, axis=-1), 
-                           e_value, next_value, done,
-                           old_done
-                           )
-            old_obs = obs
-            e_value = next_value
-            old_done = done
-            action = sample_logits(ac_logits)
+        with profiling.profile_rollout():
+            buffer.previous_states = states
+            while len(buffer) < config.horizon:
+                # Would be nicer a for loop, but in the first iteration old_obs is None, so no
+                #  data is added to the buffer and an additional loop step is required to fill it up
+                done = tf.expand_dims(done, axis=-1)
+                ac_logits, next_value, states = policy_fn(obs, states, done)
+                if old_obs is not None:
+                    buffer.add(old_obs, action, tf.expand_dims(reward, axis=-1), 
+                            e_value, next_value, done,
+                            old_done
+                            )
+                old_obs = obs
+                e_value = next_value
+                old_done = done
+                action = sample_logits(ac_logits)
 
-            # step (transition) through the environment with the action
-            # receiving the next observation, reward and if the episode has terminated or truncated
-            obs, reward, terminated, truncated, info = envs.step(action)
-            # If the episode has ended then we can reset to start a new episode
-            done = np.logical_or(terminated, truncated)
-            if np.any(done):
-                obs, info = envs.reset(options={"reset_mask": done})
-            total_steps += envs.num_envs
+                # step (transition) through the environment with the action
+                # receiving the next observation, reward and if the episode has terminated or truncated
+                obs, reward, terminated, truncated, info = envs.step(action)
+                # If the episode has ended then we can reset to start a new episode
+                done = np.logical_or(terminated, truncated)
+                if np.any(done):
+                    obs, info = envs.reset(options={"reset_mask": done})
+                total_steps += envs.num_envs
+        with profiling.profile_training():
+            iterator_fn = get_batches(config, buffer, gae_estimator)
+            losses = []
+            
+            clip_losses = []
+            critic_losses = []
+            entropy_losses = []
+            approx_kls = []
+            clip_fractions = []
+            grad_norms = []
 
-        iterator_fn = get_batches(config, buffer, gae_estimator)
-        losses = []
-        
-        clip_losses = []
-        critic_losses = []
-        entropy_losses = []
-        approx_kls = []
-        clip_fractions = []
-        grad_norms = []
+            advantages = []
 
-        advantages = []
+            if ann_scheduler is not None:
+                optimizer.learning_rate.assign(ann_scheduler(total_steps))
+            for _ in range(config.epochs):
+                batches = iterator_fn()
+                for batch in batches:
+                    with tf.GradientTape() as tape:
+                        loss, loss_clip, loss_critic, loss_entropy, aprox_kl, clip_fraction = loss_fn(batch)
+                        if tf.math.reduce_any(tf.math.is_nan(loss)):
+                            raise RuntimeError("NANs found in loss!")
+                    grads = tape.gradient(loss, policy.trainable_variables)
 
-        if ann_scheduler is not None:
-            optimizer.learning_rate.assign(ann_scheduler(total_steps))
-        for _ in range(config.epochs):
-            batches = iterator_fn()
-            for batch in batches:
-                with tf.GradientTape() as tape:
-                    loss, loss_clip, loss_critic, loss_entropy, aprox_kl, clip_fraction = loss_fn(batch)
-                    if tf.math.reduce_any(tf.math.is_nan(loss)):
-                        raise RuntimeError("NANs found in loss!")
-                grads = tape.gradient(loss, policy.trainable_variables)
+                    if config.clip_by_norm is not None:
+                        grads, grads_global_norm = tf.clip_by_global_norm(grads, config.clip_by_norm)
+                        # grads_global_norm does not consider potential clipping
+                        grads_global_norm = tf.clip_by_value(grads_global_norm, 0, config.clip_by_norm)
+                    else:
+                        grads_global_norm = tf.norm(tf.concat([tf.reshape(g, -1) for g in grads], 0))
 
-                if config.clip_by_norm is not None:
-                    grads, grads_global_norm = tf.clip_by_global_norm(grads, config.clip_by_norm)
-                    # grads_global_norm does not consider potential clipping
-                    grads_global_norm = tf.clip_by_value(grads_global_norm, 0, config.clip_by_norm)
-                else:
-                    grads_global_norm = tf.norm(tf.concat([tf.reshape(g, -1) for g in grads], 0))
+                    if tf.math.reduce_any(tf.math.is_nan(grads_global_norm)):
+                        raise RuntimeError("NANs found in gradients!")
+                    optimizer.apply(grads, policy.trainable_variables)
 
-                if tf.math.reduce_any(tf.math.is_nan(grads_global_norm)):
-                    raise RuntimeError("NANs found in gradients!")
-                optimizer.apply(grads, policy.trainable_variables)
+                    batch_adv = batch[3]
 
-                batch_adv = batch[3]
+                    losses.append(loss.numpy())
+                    clip_losses.append(loss_clip.numpy())
+                    critic_losses.append(loss_critic.numpy())
+                    entropy_losses.append(loss_entropy.numpy())
+                    approx_kls.append(aprox_kl.numpy())
+                    clip_fractions.append(clip_fraction.numpy())
+                    grad_norms.append(grads_global_norm.numpy())
+                    advantages.append(np.std(batch_adv))
 
-                losses.append(loss.numpy())
-                clip_losses.append(loss_clip.numpy())
-                critic_losses.append(loss_critic.numpy())
-                entropy_losses.append(loss_entropy.numpy())
-                approx_kls.append(aprox_kl.numpy())
-                clip_fractions.append(clip_fraction.numpy())
-                grad_norms.append(grads_global_norm.numpy())
-                advantages.append(np.std(batch_adv))
-
-        stats.update(n_iteration, total_steps, buffer, losses, clip_losses, critic_losses, entropy_losses, approx_kls, clip_fractions, grad_norms,
-                    advs=advantages)
+            stats.update(n_iteration, total_steps, buffer, losses, clip_losses, critic_losses, entropy_losses, approx_kls, clip_fractions, grad_norms,
+                        advs=advantages)
 
         iter_stats = stats.last_iteration_stats()
         if experimentdir is not None:
@@ -718,4 +775,5 @@ def train(
             update_checkpoint(checkpoint_managers, n_iteration, buffer.reward.mean())
         buffer.reset()
         update_old_policy()
-    return policy, stats
+    profiling.close()
+    return policy, stats, {"profiling": asdict(profiling)}

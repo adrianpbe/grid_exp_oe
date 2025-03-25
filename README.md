@@ -55,6 +55,7 @@ The used algorithm can be selected with the `--algo` parameters, hyperparameters
 ```bash
 python train.py --algo rnn_ppo --help
 ```
+
 The [simple_parsing](https://github.com/lebrice/SimpleParsing/tree/master) library is used to automatically generate an argument parser from dataclasses.
 
 If a model configuration is not provided, a default model with default hyperparameters is automatically selected based on the selected algorithm. To provide a custom model configuration, use the `--model_config` argument with the path to a JSON file containing the model hyperparameters. An example of configuration for a `conv_actor_critic` model based policy is:
@@ -77,6 +78,9 @@ Each available model has an associated hyperparameters dataclass, this JSON `"hp
   * `conv_actor_critic`, config dataclass: `grid_exp_oe.models.conv_actor_critic.ConvActorCriticHParams`.
   * `lstm_conv_actor_critic`, config dataclass: `grid_exp_oe.models.lstm_conv_actor_critic.LSTMConvActorCriticHParams`, only compatible with `rnn_ppo`.
 
+#### Training performance
+
+Training performance is almost always higher using CPU, so GPU is ignored by default. It can be activated with the flag `--use_gpu`.
 
 ### Evaluation
 

@@ -10,6 +10,7 @@ from grid_exp_oe.models import ModelHparams, get_model_builder
 from grid_exp_oe.ppo import PPOHparams, RNNPPOHparams, train
 
 from simple_parsing import subgroups
+import tensorflow as tf
 
 
 def _get_commit() -> str:
@@ -45,10 +46,12 @@ class ExperimentConfig:
     name: str | None = None
     env_seed: int | None = None
     model_config: str | None = None
+    use_gpu: bool = False
 
 
 def run_training_experiment(experiment: ExperimentConfig, logdir: str="logs", expdir: str="experiments"):
-    
+    if not experiment.use_gpu:
+        tf.config.set_visible_devices([], 'GPU')
     os.makedirs(logdir, exist_ok=True)
     os.makedirs(expdir, exist_ok=True)
 
@@ -68,7 +71,7 @@ def run_training_experiment(experiment: ExperimentConfig, logdir: str="logs", ex
             model_config_data = json.load(f)
         model_id = model_config_data["type"]
         model_config_data = model_config_data["hparams"]
-
+        print(f"using model config: {config_file}")
     model_builder = get_model_builder(model_id, model_config_data)
 
     exp_name = experiment.name
@@ -120,7 +123,7 @@ def run_training_experiment(experiment: ExperimentConfig, logdir: str="logs", ex
     with open(store_cfg, "w") as f:
         json.dump(all_configs, f, indent=4)
 
-    policy, stats = train(
+    policy, stats, info = train(
         model_builder, algo_hparams, envs,
         experimentdir=expdir,
         ckptdir=ckptdir,
@@ -128,5 +131,5 @@ def run_training_experiment(experiment: ExperimentConfig, logdir: str="logs", ex
         env_seed=experiment.env_seed
     )
     envs.close()
-
+    print(info)
     return policy, stats
