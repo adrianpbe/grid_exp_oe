@@ -47,6 +47,7 @@ class ExperimentConfig:
     env_seed: int | None = None
     model_config: str | None = None
     use_gpu: bool = False
+    async_envs: bool = False
 
 
 def run_training_experiment(experiment: ExperimentConfig, logdir: str="logs", expdir: str="experiments"):
@@ -58,8 +59,13 @@ def run_training_experiment(experiment: ExperimentConfig, logdir: str="logs", ex
     algo_hparams = experiment.algo
     algo_id = algo_hparams.algo_id()
     print(f"training algorithm {algo_id}")
-    envs = create_vectorized_env(experiment.env_id, algo_hparams.num_envs)
 
+    # This prevents the subprocesses from using the GPU, even if Tensorflow is not used
+    #  in the mingigrid and gymnasium code (neither in create_vectorized_env), when subprocesses
+    #  are created in async mode, Tensorflow seems to be loaded in all of them.
+    os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
+    envs = create_vectorized_env(experiment.env_id, algo_hparams.num_envs, sync=not experiment.async_envs)
+    os.environ["CUDA_VISIBLE_DEVICES"] = "0"
     config_file = experiment.model_config
  
     if config_file is None:
