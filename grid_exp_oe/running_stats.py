@@ -21,21 +21,48 @@ def finalize(existing_aggregate):
         return (variance, sample_variance)
 
 
-class RunningStats:
-    def __init__(self):
-        self.mean = 0
-        self.m2 = 0
-        self.count = 0
-        self.var = 1
-        self.std = 1
+# Batch update for mean and variance
+def batch_update(existing_aggregate, new_values):
+    (count, mean, M2) = existing_aggregate
+    n = len(new_values)
+    new_count = count + n
+    new_mean = mean + (np.sum(new_values - mean) / new_count)
+    delta = new_values - mean
+    delta2 = new_values - new_mean
+    new_M2 = M2 + np.sum(delta * delta2)
+    return (new_count, new_mean, new_M2)
 
-    def batch_update(self, new_value):
-        for v in new_value:
-            self.update(v)
+
+# Finalize for batch data
+def batch_finalize(existing_aggregate):
+    (count, mean, M2) = existing_aggregate
+    if count < 2:
+        raise ValueError("not enough data points, more than 2 are required")
+    else:
+        variance = M2 / count
+        sample_variance = M2 / (count - 1)
+        return (variance, sample_variance)
+
+
+class RunningStats:
+    def __init__(self, shape):
+        self.mean = np.zeros(shape, dtype=np.float32)
+        self.m2 = np.zeros(shape, dtype=np.float32)
+        self.count = 0
+        self.var = np.ones(shape, dtype=np.float32)
+        self.std = np.ones(shape, dtype=np.float32)
+
+    def batch_update(self, new_values):
+        self.count, self.mean, self.m2 = batch_update(
+            (self.count, self.mean, self.m2),
+            new_values
+        )
+        if self.count > 2:
+            self.var, _ = batch_finalize((self.count, self.mean, self.m2))
+
+        self.std = np.sqrt(self.var)
 
     def update(self, new_value):
-        if isinstance(new_value, np.ndarray):
-            new_value = np.squeeze(new_value)
         self.count, self.mean, self.m2 = update(
             (self.count, self.mean, self.m2),
             new_value
