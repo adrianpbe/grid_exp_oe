@@ -145,16 +145,14 @@ def run_rnn_loop(policy: keras.Model, old_policy: keras.Model, obs: Obs, episode
     return tf.stack(logits_sequence), tf.stack(value_sequence), tf.stack(old_logits_sequence)
 
 
-def build_ppo_loss(config: PPOHparams, return_all: bool):
-    clip_value, critic_coef, entropy_coef = config.clip_value, config.critic_coef, config.entropy_coef
-    def ppo_loss(logits, estimated_value, old_logits, actions, advantage, vtarget):
+def build_ppo_policy_losses(config: PPOHparams):
+    clip_value = config.clip_value
+    def ppo_policy_losses(logits, old_logits, actions, advantage):
         """Expected shapes:
           * logits: (B, num_actions)
-          * estimated_value: (B, 1)
           * old_logits: (B, num_actions)
           * actions: (B)
           * advantage: (B, 1)
-          * vtarget: (B, 1)
           """
         log_probs = logits - tf.math.reduce_logsumexp(logits, axis=-1, keepdims=True)
         ac_logprob = tf.gather_nd(
@@ -183,8 +181,6 @@ def build_ppo_loss(config: PPOHparams, return_all: bool):
             )
         )
 
-        loss_critic = tf.math.reduce_mean(tf.math.square(vtarget - estimated_value))
-
         # Entropy computation
         probs = tf.math.exp(log_probs)
         # Adds epsilon to prevent log(0)
@@ -193,29 +189,46 @@ def build_ppo_loss(config: PPOHparams, return_all: bool):
         loss_entropy =  tf.math.reduce_mean(
             tf.math.reduce_sum(probs * log_probs, axis=-1)
         )
+        #  Those quantities are for monitoring purposes
+        # aprox KL
+        #  TODO: look for a better estimator here: http://joschu.net/blog/kl-approx.html
+        aprox_kl = tf.math.reduce_mean(-log_ratio)
+        # clip fraction
+        clip_fraction = tf.math.reduce_sum(
+            tf.cast(
+                tf.logical_or(ratio < (1 - clip_value), ratio > (1 + clip_value)),
+                dtype=tf.float32
+            )
+        ) / tf.cast(tf.shape(ratio)[0], dtype=tf.float32)
+        return loss_clip, loss_entropy, aprox_kl, clip_fraction
+
+    return tf.function(ppo_policy_losses)
+
+
+def build_ppo_loss(config: PPOHparams):
+    critic_coef, entropy_coef = config.critic_coef, config.entropy_coef
+    policy_losses = build_ppo_policy_losses(config)
+
+    def ppo_loss(logits, estimated_value, old_logits, actions, advantage, vtarget):
+        """Expected shapes:
+            * logits: (B, num_actions)
+            * estimated_value: (B, 1)
+            * old_logits: (B, num_actions)
+            * actions: (B)
+            * advantage: (B, 1)
+            * vtarget: (B, 1)
+            """
+        loss_clip, loss_entropy, aprox_kl, clip_fraction = policy_losses(logits, old_logits, actions, advantage)
+        loss_critic = tf.math.reduce_mean(tf.math.square(vtarget - estimated_value))
 
         loss = loss_clip + critic_coef * loss_critic + entropy_coef * loss_entropy
-
-        if return_all:
-            #  Those quantities are for monitoring purposes
-            # aprox KL
-            #  TODO: look for a better estimator here: http://joschu.net/blog/kl-approx.html
-            aprox_kl = tf.math.reduce_mean(-log_ratio)
-            # clip fraction
-            clip_fraction = tf.math.reduce_sum(
-                tf.cast(
-                    tf.logical_or(ratio < (1 - clip_value), ratio > (1 + clip_value)),
-                    dtype=tf.float32
-                )
-            ) / tf.cast(tf.shape(ratio)[0], dtype=tf.float32)
-            return loss, loss_clip, loss_critic, loss_entropy, aprox_kl, clip_fraction
-        return loss
+        return loss, loss_clip, loss_critic, loss_entropy, aprox_kl, clip_fraction
 
     return tf.function(ppo_loss)
 
 
-def build_ppo_loss_computation(policy: keras.Model, old_policy: keras.Model, config: PPOHparams, return_all: bool):
-    loss_fn = build_ppo_loss(config, return_all)
+def build_ppo_loss_computation(policy: keras.Model, old_policy: keras.Model, config: PPOHparams):
+    loss_fn = build_ppo_loss(config)
 
     def compute(batch):
         """Expected shapes:
@@ -233,8 +246,8 @@ def build_ppo_loss_computation(policy: keras.Model, old_policy: keras.Model, con
     return tf.function(compute)
 
 
-def build_rnn_ppo_loss_computation(policy: keras.Model, old_policy: keras.Model, config: PPOHparams, return_all: bool):
-    loss_fn = build_ppo_loss(config, return_all)
+def build_rnn_ppo_loss_computation(policy: keras.Model, old_policy: keras.Model, config: PPOHparams):
+    loss_fn = build_ppo_loss(config)
 
     def compute(batch):
         """Expected shapes:
@@ -659,12 +672,12 @@ def train(
     gae_estimator = vectorize_gae_estimator(get_gae_estimator(config.gamma, config.gae_lambda))
     
     if not rnn_ppo:
-        loss_fn = build_ppo_loss_computation(policy, old_policy, config, True)
+        loss_fn = build_ppo_loss_computation(policy, old_policy, config)
         get_batches = get_batches_iterator_fn
         policy_fn = lambda obs_, states_, starts_: (*policy(obs_), None)
         states = None
     else:
-        loss_fn = build_rnn_ppo_loss_computation(policy, old_policy, config, True)
+        loss_fn = build_rnn_ppo_loss_computation(policy, old_policy, config)
         get_batches = get_rnn_batches_iterator_fn
         policy_fn = lambda obs_, states_, starts_: policy(prepare_rnn_inputs(obs_, states_, starts_))
 
