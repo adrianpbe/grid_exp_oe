@@ -7,7 +7,8 @@ import subprocess
 from grid_exp_oe.base import AlgorithmHParams
 from grid_exp_oe.env import create_vectorized_env
 from grid_exp_oe.models import ModelHparams, get_model_builder
-from grid_exp_oe.ppo import PPOHparams, RNNPPOHparams, train
+from grid_exp_oe.ppo import PPOHparams, RNNPPOHparams, ppo_train
+from grid_exp_oe.rnd_ppo import PPORNDHParams, rnd_ppo_train
 
 from simple_parsing import subgroups
 import tensorflow as tf
@@ -24,12 +25,22 @@ def _get_commit() -> str:
 AVAILABLE_ALGORITHMS_HPARAMS = {
     "ppo": PPOHparams,
     "rnn_ppo": RNNPPOHparams,
+    "rnd_ppo": PPORNDHParams,
+}
+
+
+ALGORITHMS_TRAINING_FUNCS = {
+    "ppo": ppo_train,
+    "rnn_ppo": ppo_train,
+    "rnd_ppo": rnd_ppo_train,
+
 }
 
 
 DEFAULT_MODEL_BUILDER = {
     "ppo": "conv_actor_critic",
     "rnn_ppo": "lstm_conv_actor_critic",
+    "rnd_ppo": "rnd_conv_actor_critic",
 }
 
 
@@ -58,6 +69,8 @@ def run_training_experiment(experiment: ExperimentConfig, logdir: str="logs", ex
 
     algo_hparams = experiment.algo
     algo_id = algo_hparams.algo_id()
+    train = ALGORITHMS_TRAINING_FUNCS[algo_id]
+
     print(f"training algorithm {algo_id}")
 
     # This prevents the subprocesses from using the GPU, even if Tensorflow is not used

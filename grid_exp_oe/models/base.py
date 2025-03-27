@@ -24,7 +24,7 @@ class PolicyType(StrEnum):
     ACTOR_CRITIC = "actor_critic"
     VALUE_BASED = "value_based"
     RNN_ACTOR_CRITIC = "rnn_actor_critic"
-
+    RND_ACTOR_CRITIC = "rnd_actor_critic"
 
 class ModelBuilder(ABC, Generic[H]):
     @abstractmethod
@@ -132,6 +132,36 @@ class RNNActorCriticBuilder(ModelBuilder[H], Generic[H]):
                 obs = expand_batch_rec(obs)
                 start = np.expand_dims(start, axis=0)
             logits, _, states = model(prepare_rnn_inputs(obs, states, start))
+            action = sample_logits(logits)
+            if return_numpy:
+                return action.numpy()
+            return action
+        return policy
+
+
+class RNDActorCriticBuilder(ModelBuilder[H], Generic[H]):
+    def build(self, env: gym.Env | gym.vector.VectorEnv) -> keras.Model:
+        input_layers, (logits, intrinsic_value, extrinsic_value) = self._build(env)
+        policy = keras.Model(inputs=(input_layers), outputs=(logits, intrinsic_value, extrinsic_value))
+        return policy
+
+    @abstractmethod
+    def _build(self, env: gym.Env | gym.vector.VectorEnv) -> keras.Model:
+        ...
+
+    @abstractmethod
+    def rnd(self) -> keras.Model:
+        ...
+
+    @staticmethod
+    def policy_type() -> PolicyType:
+        return PolicyType.RND_ACTOR_CRITIC
+
+    def adapt_eval(self, model: keras.Model, num_envs: int, expand_batch: bool, return_numpy=False) -> Callable:
+        def policy(obs, start):
+            if expand_batch:
+                obs = expand_batch_rec(obs)
+            logits, *_ = model(obs)
             action = sample_logits(logits)
             if return_numpy:
                 return action.numpy()

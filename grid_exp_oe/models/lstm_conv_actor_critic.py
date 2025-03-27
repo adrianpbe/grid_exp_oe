@@ -68,6 +68,7 @@ class ResetLSTMState(layers.Layer):
     def get_config(self):
         return {"lstm_units", self.lstm_units}
 
+
 class LSTMConvActorCriticBuilder(RNNActorCriticBuilder[LSTMConvActorCriticHParams]):
     def __init__(self, hparams: LSTMConvActorCriticHParams):
         self.hparams = hparams

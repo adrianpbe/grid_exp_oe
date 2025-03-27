@@ -458,12 +458,12 @@ def obs_from_shape(num_envs: int, size: int, input_layer: keras.KerasTensor):
 
 
 @overload
-def flat_envs_array(x: tuple | np.ndarray, return_tensor: Literal[True]) -> tuple | np.ndarray:
+def flat_envs_array(x: tuple | np.ndarray, return_tensor: Literal[True]) -> tuple | tf.Tensor:
     ...
 
 
 @overload
-def flat_envs_array(x: tuple | np.ndarray, return_tensor: Literal[False]) -> tuple | tf.Tensor:
+def flat_envs_array(x: tuple | np.ndarray, return_tensor: Literal[False]) -> tuple | np.ndarray:
     ...
 
 
@@ -482,10 +482,10 @@ def feed_summary_writer(iteration_stats: dict[str, float]):
         tf.summary.scalar(scalar_id, data=value, step=total_steps)
 
 
-def get_feed_stats_csv(statsdir: str) -> Callable[[dict[str, float]], None]:
+def get_feed_stats_csv(statsdir: str, fieldnames: list[str]) -> Callable[[dict[str, float]], None]:
     def feed_stats_csv_fn(iteration_stats: dict[str, float]):
         with open(statsdir, "a", newline='') as f:
-            csv_writer = csv.DictWriter(f, fieldnames=FIELDNAMES)
+            csv_writer = csv.DictWriter(f, fieldnames=fieldnames)
             csv_writer.writerow(iteration_stats)
     return feed_stats_csv_fn
 
@@ -634,7 +634,7 @@ class PPOProfiling:
         self.total_time = time.time() - self.start_time
 
 
-def train(
+def ppo_train(
         model_builder: ModelBuilder, config: PPOHparams, envs: gym.vector.VectorEnv,
         save_freq=1, *, experimentdir=None,
         ckptdir=None, logdir=None, env_seed=None
@@ -643,14 +643,14 @@ def train(
     rnn_ppo = isinstance(config, RNNPPOHparams)
     policy_type = model_builder.policy_type()
 
-    if rnn_ppo and policy_type != PolicyType.RNN_ACTOR_CRITIC:
+    if rnn_ppo and policy_type != RNNPPORequirements.policy_type:
         raise ValueError(f"policy type {policy_type} not supported in RNN PPO")
-    elif not rnn_ppo and policy_type != PolicyType.ACTOR_CRITIC:
+    elif not rnn_ppo and policy_type != PPORequirements.policy_type:
         raise ValueError(f"policy type {policy_type} not supported in PPO")
 
     if experimentdir is not None:
         statsdir = os.path.join(experimentdir, "stats.csv")
-        feed_stats_csv = get_feed_stats_csv(statsdir)
+        feed_stats_csv = get_feed_stats_csv(statsdir, FIELDNAMES)
         with open(statsdir, "w", newline='') as f:
             csv_writer = csv.DictWriter(f, fieldnames=FIELDNAMES)
             csv_writer.writeheader()

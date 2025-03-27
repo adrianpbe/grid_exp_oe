@@ -46,11 +46,17 @@ def batch_finalize(existing_aggregate):
 
 class RunningStats:
     def __init__(self, shape):
+        self.shape = shape
         self.mean = np.zeros(shape, dtype=np.float32)
         self.m2 = np.zeros(shape, dtype=np.float32)
         self.count = 0
         self.var = np.ones(shape, dtype=np.float32)
         self.std = np.ones(shape, dtype=np.float32)
+
+    def _values_as_arrays(self):
+        self.mean = np.array(self.mean)
+        self.std = np.array(self.std)
+        self.var = np.array(self.var)
 
     def batch_update(self, new_values):
         self.count, self.mean, self.m2 = batch_update(
@@ -62,6 +68,8 @@ class RunningStats:
 
         self.std = np.sqrt(self.var)
 
+        self._values_as_arrays()
+
     def update(self, new_value):
         self.count, self.mean, self.m2 = update(
             (self.count, self.mean, self.m2),
@@ -71,6 +79,7 @@ class RunningStats:
             self.var, _ = finalize((self.count, self.mean, self.m2))
 
         self.std = np.sqrt(self.var)
+        self._values_as_arrays()
 
     def normalize(self, x):
         return (x - self.mean) / self.std
