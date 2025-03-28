@@ -8,7 +8,7 @@ from grid_exp_oe.base import AlgorithmHParams
 from grid_exp_oe.env import create_vectorized_env
 from grid_exp_oe.models import ModelHparams, get_model_builder
 from grid_exp_oe.ppo import PPOHparams, RNNPPOHparams, ppo_train
-from grid_exp_oe.rnd_ppo import PPORNDHParams, rnd_ppo_train
+from grid_exp_oe.rnd_ppo import RNDPPOHParams, rnd_ppo_train
 
 from simple_parsing import subgroups
 import tensorflow as tf
@@ -25,7 +25,7 @@ def _get_commit() -> str:
 AVAILABLE_ALGORITHMS_HPARAMS = {
     "ppo": PPOHparams,
     "rnn_ppo": RNNPPOHparams,
-    "rnd_ppo": PPORNDHParams,
+    "rnd_ppo": RNDPPOHParams,
 }
 
 

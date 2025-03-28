@@ -124,7 +124,7 @@ def build_rnd_forward_model(im_obs_shape, emb_size: int, activation: str, name: 
     x = feature_extractor(in_img_obs)
 
     x = layers.Flatten()(x)
-    x = layers.Dense(64)(x)
+    x = layers.Dense(64, activation=activation)(x)
     x = x + dir_z
 
     x = layers.Dense(emb_size, activation=activation)(x)

@@ -24,13 +24,14 @@ RNDPPORequirements = AlgorithmRequirements(
 
 
 @dataclass
-class PPORNDHParams(ppo.PPOHparams):
+class RNDPPOHParams(ppo.PPOHparams):
     ext_coef: float = 1.0
     intrinsic_coef: float = 0.5
     intrinsic_gamma: float = 0.999
     intrinsic_episodic: bool = False
     proportion_distillation: float = 0.25
     initial_random_steps: int = 512
+    substract_int_mean: bool = False
 
     def requirements(self) -> AlgorithmRequirements:
         return RNDPPORequirements
@@ -39,7 +40,7 @@ class PPORNDHParams(ppo.PPOHparams):
         return "rnd_ppo"
 
 
-def build_rnd_loss(config: PPORNDHParams):
+def build_rnd_loss(config: RNDPPOHParams):
     critic_coef, entropy_coef = config.critic_coef, config.entropy_coef
     policy_losses = ppo.build_ppo_policy_losses(config)
 
@@ -55,7 +56,7 @@ def build_rnd_loss(config: PPORNDHParams):
         mask = tf.random.uniform(tf.shape(distillation_errors)) < config.proportion_distillation
         mask = tf.cast(mask, tf.float32)
 
-        distillation_loss = tf.math.reduce_mean(distillation_errors * mask)
+        distillation_loss = tf.math.reduce_sum(distillation_errors * mask) / tf.math.reduce_sum(mask)
 
         loss = loss_clip + critic_coef * loss_critic + entropy_coef * loss_entropy + distillation_loss
 
@@ -64,7 +65,7 @@ def build_rnd_loss(config: PPORNDHParams):
     return tf.function(rnd_loss)
 
 
-def build_rnd_loss_computation(policy: keras.Model, old_policy: keras.Model, rnd: keras.Model, config: PPORNDHParams):
+def build_rnd_loss_computation(policy: keras.Model, old_policy: keras.Model, rnd: keras.Model, config: RNDPPOHParams):
     loss_fn = build_rnd_loss(config)
 
     def loss_computation(batch):
@@ -157,6 +158,7 @@ class RNDStats:
     steps_per_second: list[float] = field(default_factory=list)
     reward: list[float] = field(default_factory=list)
     final_reward: list[float] = field(default_factory=list)
+    intrinsic_reward: list[float] = field(default_factory=list)
     num_of_episodes: list[int] = field(default_factory=list)
     value: list[float] = field(default_factory=list)
     loss: list[float] = field(default_factory=list)
@@ -175,6 +177,9 @@ class RNDStats:
     grad_norm: list[float] = field(default_factory=list)
 
     advs: list[float] = field(default_factory=list)
+
+    intrinsic_ret_mean: list[float] = field(default_factory=list)
+    intrinsic_ret_std: list[float] = field(default_factory=list)
 
     def __post_init__(self):
         self.start_time: float = time.time()
@@ -207,6 +212,7 @@ class RNDStats:
             "env/steps_per_second": self.steps_per_second[-1],
             "env/reward": self.reward[-1],
             "env/final_reward": self.final_reward[-1],
+            "env/intrinsic_reward": self.intrinsic_reward[-1],
             "env/num_of_episodes": self.num_of_episodes[-1],
             "losses/loss": self.loss[-1],
             "losses/loss_clip": self.loss_clip[-1],
@@ -220,6 +226,9 @@ class RNDStats:
             "losses/loss_extrinsic_critic": self.loss_extrinsic_critic[-1],
             "losses/loss_intrinsic_critic": self.loss_intrinsic_critic[-1],
             "losses/loss_distillation": self.loss_distillation[-1],
+            "losses/intrinsic_ret_mean": self.intrinsic_ret_mean[-1],
+            "losses/intrinsic_ret_std": self.intrinsic_ret_std[-1],
+            
         }
 
     @staticmethod
@@ -230,6 +239,7 @@ class RNDStats:
             "env/steps_per_second",
             "env/reward",
             "env/final_reward",
+            "env/intrinsic_reward",
             "env/num_of_episodes",
             "losses/loss",
             "losses/loss_clip",
@@ -243,6 +253,8 @@ class RNDStats:
             "losses/loss_extrinsic_critic",
             "losses/loss_intrinsic_critic",
             "losses/loss_distillation",
+            "losses/intrinsic_ret_mean",
+            "losses/intrinsic_ret_std"
         ]
 
 
@@ -260,18 +272,21 @@ def vectorized_returns(rewards: np.ndarray, terminal, gamma: float, last_returns
 
 
 def get_batches_iterator_fn(
-        config: PPORNDHParams, buffer: Buffer, gae_estimator, intrinsic_gae_estimator,
-        intrinsic_runnin_stats: RunningStats,
+        config: RNDPPOHParams, buffer: Buffer, gae_estimator, intrinsic_gae_estimator,
+        intrinsic_running_stats: RunningStats,
         obs_running_stats: RunningStats,
         ) -> Callable[[], Iterable[ppo.TfBatches]]:
     extrinsic_advantage = gae_estimator(buffer.estimated_value, buffer.next_estimated_value, buffer.reward, buffer.terminal)
     # Normalize intrinsic reward
-    if intrinsic_runnin_stats.shape != (1,):
+    if intrinsic_running_stats.shape != (1,):
         raise ValueError("Intrinsic running stats must be scalar")
     intrinsic_returns = vectorized_returns(buffer.intrinsic_reward, buffer.terminal, config.intrinsic_gamma)
-    intrinsic_runnin_stats.batch_update(intrinsic_returns.reshape(-1))
-    # According to the paper, intrinsic rewards are normalized by dividing by the standard deviation, mean is ignored
-    intrinsic_reward = buffer.intrinsic_reward / intrinsic_runnin_stats.std
+    intrinsic_running_stats.batch_update(intrinsic_returns.reshape(-1))
+    if config.substract_int_mean:
+        intrinsic_reward = intrinsic_running_stats.normalize(buffer.intrinsic_reward)
+    else:
+        # According to the paper, intrinsic rewards are normalized by dividing by the standard deviation, mean is ignored
+        intrinsic_reward = buffer.intrinsic_reward / (intrinsic_running_stats.std + 1e-8)
 
     if config.intrinsic_episodic:
         intrinsic_advantage = intrinsic_gae_estimator(
@@ -321,7 +336,7 @@ def collects_random_stats(env: gym.vector.VectorEnv, num_steps: int, runnin_stat
 
 
 def rnd_ppo_train(
-        model_builder: RNDActorCriticBuilder, config: PPORNDHParams, envs: gym.vector.VectorEnv,
+        model_builder: RNDActorCriticBuilder, config: RNDPPOHParams, envs: gym.vector.VectorEnv,
         save_freq=1, *, experimentdir=None,
         ckptdir=None, logdir=None, env_seed=None
         ) -> tuple[keras.Model, RNDStats, dict]:
@@ -356,7 +371,7 @@ def rnd_ppo_train(
     int_reward_running_stats = RunningStats(shape=(1,))
 
     if ckptdir is not None:
-        checkpoint_managers = ppo.create_checkpoints(ckptdir, policy, optimizer, save_freq)
+        checkpoint_managers = ppo.create_checkpoints(ckptdir, policy, optimizer, save_freq, "rnd_ppo_policy", {"rnd_ppo": rnd})
     else:
         checkpoint_managers = None
 
@@ -455,7 +470,7 @@ def rnd_ppo_train(
                          ) = loss_fn(batch)
                         if tf.math.reduce_any(tf.math.is_nan(loss)):
                             raise RuntimeError("NANs found in loss!")
-                    grads = tape.gradient(loss, policy.trainable_variables)
+                    grads = tape.gradient(loss, policy.trainable_variables + rnd.trainable_variables)
 
                     if config.clip_by_norm is not None:
                         grads, grads_global_norm = tf.clip_by_global_norm(grads, config.clip_by_norm)
@@ -466,7 +481,7 @@ def rnd_ppo_train(
 
                     if tf.math.reduce_any(tf.math.is_nan(grads_global_norm)):
                         raise RuntimeError("NANs found in gradients!")
-                    optimizer.apply(grads, policy.trainable_variables)
+                    optimizer.apply(grads, policy.trainable_variables + rnd.trainable_variables)
 
                     batch_adv = batch[3]
 
@@ -489,7 +504,10 @@ def rnd_ppo_train(
                 advs=advantages,
                 loss_extrinsic_critic=extrinsic_critic_losses,
                 loss_intrinsic_critic=intrinsic_critic_losses,
-                loss_distillation=distillation_losses
+                loss_distillation=distillation_losses,
+                intrinsic_reward=buffer.intrinsic_reward,
+                intrinsic_ret_mean=int_reward_running_stats.mean,
+                intrinsic_ret_std=int_reward_running_stats.std,
                 )
 
         iter_stats = stats.last_iteration_stats()

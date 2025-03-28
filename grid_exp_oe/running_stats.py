@@ -82,7 +82,7 @@ class RunningStats:
         self._values_as_arrays()
 
     def normalize(self, x):
-        return (x - self.mean) / self.std
+        return (x - self.mean) / (self.std + 1e-8)
 
     def denormalize(self, x):
         return (x *  self.std) + self.mean

@@ -56,7 +56,7 @@ class PPOHparams(AlgorithmHParams):
     entropy_coef: float = 0.01
     annealing_steps: int | None = None
     final_learning_rate: float | None = None
-    clip_by_norm: float | None = None
+    clip_by_norm: float | None = 5
     normalize_batch_advantage: bool = True
 
     def __post_init__(self):
@@ -499,7 +499,7 @@ CheckpointManagers = tuple[
 ]
 
 
-def create_checkpoints(ckptdir: str, policy: keras.Model, optimizer: keras.Optimizer, save_freq: int) -> CheckpointManagers:
+def create_checkpoints(ckptdir: str, policy: keras.Model, optimizer: keras.Optimizer, save_freq: int, name: str="ppo_policy", additional_objects: dict={}) -> CheckpointManagers:
     parent, ckpt_path = os.path.split(ckptdir)
     best_ckptdir = os.path.join(parent, "best_" + ckpt_path)
     os.mkdir(best_ckptdir)
@@ -508,12 +508,14 @@ def create_checkpoints(ckptdir: str, policy: keras.Model, optimizer: keras.Optim
     optimizer=optimizer,
     model=policy,
     step=tf.Variable(0, trainable=False),
+    **additional_objects
     )
         
     checkpoint_best = tf.train.Checkpoint(
         optimizer=optimizer,
         model=policy,
-        best_reward=tf.Variable(float('-inf'), trainable=False)  # Track best reward
+        best_reward=tf.Variable(float('-inf'), trainable=False),  # Track best reward
+        **additional_objects
     )
 
     # Create a checkpoint manager that keeps the best checkpoints
@@ -521,7 +523,7 @@ def create_checkpoints(ckptdir: str, policy: keras.Model, optimizer: keras.Optim
         checkpoint,
         directory=ckptdir,
         max_to_keep=5,
-        checkpoint_name="ppo_policy"
+        checkpoint_name=name,
     )
 
     # Create a separate manager for the best model
@@ -529,7 +531,7 @@ def create_checkpoints(ckptdir: str, policy: keras.Model, optimizer: keras.Optim
         checkpoint_best,
         directory=best_ckptdir,
         max_to_keep=3,
-        checkpoint_name="best_ppo_policy"
+        checkpoint_name="best_" + name
     )
     return checkpoint, checkpoint_best, checkpoint_manager, best_checkpoint_manager, save_freq
 
