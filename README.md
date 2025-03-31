@@ -2,8 +2,6 @@
 
 Just implementing and playing with RL algorithms, with a focus on exploration, novelty seeking and open endedness, for grid environment with sparse rewards ([Minigrid](https://github.com/Farama-Foundation/Minigrid) and potentially [Minihack](https://github.com/samvelyan/minihack) and [Crafter](https://github.com/danijar/crafter)).
 
-While the codebase is planned to be focused on exploration, reward free and novelty seeking algorithms, only a Proximal Policy Optimization (PPO) baseline is implemented at the moment (an RNN version is also available).
-
 
 ## Installation
 
@@ -28,6 +26,14 @@ Training in vectorized MiniGrid environments, only `image` and `direction` obser
 A basic experiment tracking is built-in, models checkpoints are stored, training stats are logged to a CSV file and to Tensorboard, config files with algorithms and models hyperparameters, as well metadata (time and commit hash) are stored.
 
 An evaluation tool is also included, it supports the evaluation of random policies on any environment, the evaluation of existing training experiments (with automatic loading of the best checkpoint or manual selection) and optionally rendering of the environment for humans.
+
+### Algorithms
+
+Implemented algorithms are listed here, to see how to train them see the next section.
+
+* [PPO](https://arxiv.org/abs/1707.06347): Stable policy gradient method, useful as a baseline for comparison. Algorithm id: `ppo`.
+  * There is a recurrent version with algorithm id `rnn_ppo`.
+* [RND](https://arxiv.org/abs/1810.12894): It's a PPO implementation that includes the RND exploration strategy: it uses an intrinsic reward to encourage exploration based on the distillation of a random network that outputs a random embedding of observations. Algorithm id: `rnd_ppo`.
 
 
 ## Usage
