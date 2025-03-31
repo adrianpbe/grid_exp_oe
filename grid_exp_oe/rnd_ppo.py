@@ -13,7 +13,12 @@ from tqdm import tqdm
 
 from grid_exp_oe.base import AlgorithmHParams, AlgorithmRequirements
 from grid_exp_oe.models import RNDActorCriticBuilder, PolicyType, prepare_rnn_inputs
-from grid_exp_oe.common import sample_logits, get_gae_estimator, vectorize_gae_estimator
+from grid_exp_oe.common import (
+    sample_logits,
+    get_gae_estimator,
+    vectorize_gae_estimator,
+    vectorized_returns
+)
 from grid_exp_oe.running_stats import RunningStats
 import grid_exp_oe.ppo as ppo
 
@@ -259,16 +264,6 @@ class RNDStats:
 
 
 FIELDNAMES = RNDStats.fieldnames()
-
-
-def vectorized_returns(rewards: np.ndarray, terminal, gamma: float, last_returns=None):
-    returns = np.zeros_like(rewards)
-    for i in range(len(rewards[1]) - 1, -1, -1):
-        if last_returns is None:
-            returns[i] = rewards[i]
-        else:
-            returns[i] = rewards[i] + gamma * (1 - terminal[i]) * returns[i + 1]
-    return returns
 
 
 def get_batches_iterator_fn(

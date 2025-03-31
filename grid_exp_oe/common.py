@@ -17,6 +17,17 @@ def expand_batch_rec(x: tf.Tensor | tuple):
     return tf.expand_dims(x, axis=0)
 
 
+def vectorized_returns(rewards: np.ndarray, terminal, gamma: float):
+    returns = np.zeros_like(rewards)
+    num_steps = rewards.shape[1]
+    for i in range(num_steps - 1, -1, -1):
+        if i == (num_steps - 1):
+            returns[i] = rewards[i]
+        else:
+            returns[i] = rewards[i] + gamma * (1 - terminal[i]) * returns[i + 1]
+    return returns
+
+
 def get_gae_estimator(gamma: float, gae_lambda: float):
     def estimate_gae(estimated_value, next_estimated_value, reward, terminal):
         delta = reward + (1 - terminal) * gamma * next_estimated_value - estimated_value
