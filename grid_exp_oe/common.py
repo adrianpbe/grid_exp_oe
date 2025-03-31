@@ -22,9 +22,9 @@ def vectorized_returns(rewards: np.ndarray, terminal, gamma: float):
     num_steps = rewards.shape[1]
     for i in range(num_steps - 1, -1, -1):
         if i == (num_steps - 1):
-            returns[i] = rewards[i]
+            returns[:, i] = rewards[:, i]
         else:
-            returns[i] = rewards[i] + gamma * (1 - terminal[i]) * returns[i + 1]
+            returns[:, i] = rewards[:, i] + gamma * (1 - terminal[:, i]) * returns[:, i + 1]
     return returns
 
 
